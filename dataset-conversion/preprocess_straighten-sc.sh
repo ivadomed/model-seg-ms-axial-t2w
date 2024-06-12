@@ -114,6 +114,7 @@ cd ${SUBJECT}/anat
 # Define variables
 # We do a substitution '/' --> '_' in case there is a subfolder 'ses-0X/'
 file="${SUBJECT//[\/]/_}"
+sub_ses="${SUBJECT//[\/]/_}"
 
 # Add suffix corresponding to the view
 file=${file}_acq-ax_T2w
@@ -170,6 +171,8 @@ rsync -avzh $PATH_DATA_PROCESSED/dataset_description.json $PATH_DATA_PROCESSED_C
 
 # Image
 rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file}_straight.nii.gz $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${file}_desc-straightened.nii.gz
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/warp_curve2straight.nii.gz $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${sub_ses}_warp_curve2straight.nii.gz
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/warp_straight2curve.nii.gz $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${sub_ses}_warp_straight2curve.nii.gz
 rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file}.json $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${file}_desc-straightened.json
 
 # Label
