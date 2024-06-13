@@ -95,7 +95,6 @@ def get_parser():
 def get_region_based_label(subject_label_file, subject_image_file, site_name, sub_ses_name, thr=0.5):
     # define path for sc seg file
     subject_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', f'_{LABEL_SUFFIXES[site_name][0]}')
-    print(subject_seg_file)
 
     # check if the seg file exists
     if not os.path.exists(subject_seg_file):
