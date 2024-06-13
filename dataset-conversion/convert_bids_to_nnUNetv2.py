@@ -95,6 +95,7 @@ def get_parser():
 def get_region_based_label(subject_label_file, subject_image_file, site_name, sub_ses_name, thr=0.5):
     # define path for sc seg file
     subject_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', f'_{LABEL_SUFFIXES[site_name][0]}')
+    print(subject_seg_file)
 
     # check if the seg file exists
     if not os.path.exists(subject_seg_file):
@@ -106,7 +107,8 @@ def get_region_based_label(subject_label_file, subject_image_file, site_name, su
                                                sub_ses_name, thr=thr)
 
     # save the region-based label
-    combined_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', '_sc-lesion')
+    site_suffix = 'native' if site_name == 'muc' else site_name
+    combined_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', f'_sc-lesion_{site_suffix}')
     nib.save(seg_lesion_nii, combined_seg_file)
 
     return combined_seg_file
