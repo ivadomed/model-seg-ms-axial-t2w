@@ -143,9 +143,9 @@ for file in $(find "$PWD" -type f -name "*acq-ax*" ! -name "*seg*" ! -name "*les
       # NOTE: NN interpolation is changing the GT by adding new voxels (originally not in GT). Linear interpolation does that too but it is less subtle than with NN interpolation
       sct_apply_transfo -i ${base_name}_seg-manual.nii.gz -d ${base_name}_desc-straightened.nii.gz -w warp_curve2straight.nii.gz -x linear -o ${base_name}_seg-manual_desc-straightened.nii.gz
       sct_apply_transfo -i ${base_name}_lesion-manual.nii.gz -d ${base_name}_desc-straightened.nii.gz -w warp_curve2straight.nii.gz -x linear -o ${base_name}_lesion-manual_desc-straightened.nii.gz
-      mv warp_curve2straight.nii.gz ${base_name}_warp_curve2straight_chunk-${counter}.nii.gz
-      mv warp_straight2curve.nii.gz ${base_name}_warp_straight2curve_chunk-${counter}.nii.gz
-      mv straight_ref.nii.gz ${base_name}_straight_ref_chunk-${counter}.nii.gz
+      mv warp_curve2straight.nii.gz ${base_name}_warp_curve2straight.nii.gz
+      mv warp_straight2curve.nii.gz ${base_name}_warp_straight2curve.nii.gz
+      mv straight_ref.nii.gz ${base_name}_straight_ref.nii.gz
 
       # Threshold and other post-processing as needed
       sct_maths -i ${base_name}_seg-manual_desc-straightened.nii.gz -bin 0.5 -o ${base_name}_seg-manual_desc-straightened.nii.gz
