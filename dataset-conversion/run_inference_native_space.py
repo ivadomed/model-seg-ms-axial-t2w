@@ -80,10 +80,16 @@ if __name__ == "__main__":
 
     # Argument parsing
     parser = argparse.ArgumentParser(description="Process nifti files and compute metrics.")
-    parser.add_argument('--prediction', required=True, help='Path to the prediction folder.')
-    parser.add_argument('--images', required=True, help='Path to the images folder.')
-    parser.add_argument('--warping_fields', required=True, help='Path to the warping fields folder.')
-    parser.add_argument('--output', required=True, help='Path to the output folder.')
+    parser.add_argument('--preds-straight', required=True, 
+                        help='Path to the folder containing the predictions in straightened space.')
+    parser.add_argument('--images-native', required=True, 
+                        help='Path to the folder containing images in the native space.')
+    parser.add_argument('--warps-straight-to-native', required=True, 
+                        help='Path to the folder containing warping fields to go from '
+                        'straight to native space.')
+    parser.add_argument('--output', required=True, 
+                        help='Path to the output folder storing the transformed prediction from '
+                        'straight to native space.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of parallel workers.')
 
     args = parser.parse_args()
