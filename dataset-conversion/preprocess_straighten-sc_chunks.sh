@@ -174,8 +174,17 @@ rsync -avzh $PATH_DATA_PROCESSED/dataset_description.json $PATH_DATA_PROCESSED_C
 rsync -avzh $PATH_DATA_PROCESSED/participants.* $PATH_DATA_PROCESSED_CLEAN/
 rsync -avzh $PATH_DATA_PROCESSED/README $PATH_DATA_PROCESSED_CLEAN/
 
-# Images
+# Straightened Images
 for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*T2w_desc-straightened.nii.gz") 
+do
+# Image
+  mkdir -p $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/
+  file_clean="${file/$PATH_DATA_PROCESSED/$PATH_DATA_PROCESSED_CLEAN}"
+  rsync -avzh $file $file_clean
+done
+
+# Unprocessed Images
+for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*T2w.nii.gz") 
 do
 # Image
   mkdir -p $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/
@@ -185,6 +194,15 @@ done
 
 # Labels
 for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*chunk*manual*straight*")
+do
+# Labels
+  mkdir -p $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/
+  file_clean="${file/$PATH_DATA_PROCESSED/$PATH_DATA_PROCESSED_CLEAN/derivatives/labels}"
+  rsync -avzh $file $file_clean
+done
+
+# Native Labels (ie not straightened)
+for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*chunk*manual*" ! -name "*desc-straight*")
 do
 # Labels
   mkdir -p $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/

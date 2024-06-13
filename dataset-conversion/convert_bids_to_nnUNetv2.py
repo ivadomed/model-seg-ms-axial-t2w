@@ -144,7 +144,10 @@ def create_directories(path_out, site):
     #     pass
     # else:
     paths = [Path(path_out, f'imagesTs_{site}'),
-            Path(path_out, f'labelsTs_{site}')]
+             Path(path_out, 'imagesTs_native'),
+             Path(path_out, f'labelsTs_{site}'),
+             Path(path_out, f'labelsTs_native'),
+             Path(path_out, 'warpingTs_straight_to_native')]
 
     for path in paths:
         path.mkdir(parents=True, exist_ok=True)
@@ -160,7 +163,7 @@ def find_type_in_path(path):
     str: Extracted site identifier or None if not found.
     """
     # Find 'dcm-zurich-lesions' or 'dcm-zurich-lesions-20231115'
-    if 'prepro' in path:
+    if 'clean' in path:
         match = 'straight'
     elif 'spine' in path:
         match = 'muc'
@@ -360,7 +363,12 @@ def main():
         if site_name == 'muc':
             subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
         elif site_name == 'straight':
+            subject_image_file_native = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
+            print(subject_image_file_native)
+            subject_label_file_native = subject_label_file.replace(f'{LABEL_SUFFIXES[site_name][1]}', 'lesion-manual')
+            print(subject_label_file_native)
             subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '').replace('T2w', 'T2w_desc-straightened')
+            subject_warping_file = subject_label_file.replace("lesion-manual_desc-straightened.nii.gz", "warp_straight2curve.nii.gz")
 
         # Train images
         if subject_label_file in train_images.keys():
@@ -440,7 +448,16 @@ def main():
                                                      f'{args.dataset_name}_{sub_name}_{test_ctr:03d}_0000.nii.gz')
             subject_label_file_nnunet = os.path.join(Path(path_out, f'labelsTs_{site_name}'),
                                                      f'{args.dataset_name}_{sub_name}_{test_ctr:03d}.nii.gz')
-
+            
+            if site_name == 'straight':
+                subject_warping_file_nnunet = os.path.join(Path(path_out, f'warpingTs_straight_to_native'),
+                                                     f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}.nii.gz')
+                
+                subject_image_file_native_nnunet = os.path.join(Path(path_out, f'imagesTs_native'),
+                                                     f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}_0000.nii.gz')
+                subject_label_file_native_nnunet = os.path.join(Path(path_out, f'labelsTs_native'),
+                                                     f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}.nii.gz')
+                
             if args.multichannel:
                 if args.region_based:
                     raise ValueError("Multi-channel input is not supported with region-based labels.")
@@ -452,6 +469,17 @@ def main():
                 # overwritten the subject_sc_file_nnunet with the label for multi-channel training (lesion is part of SC)
                 subject_sc_file = get_multi_channel_label_input(subject_label_file, subject_image_file,
                                                                 site_name, sub_name, thr=0.5)
+                
+                if site_name == 'straight':
+                    # ensure the native label is processed as well
+                    # channel 0: image, channel 1: SC seg
+                    subject_sc_file_nnunet_native = os.path.join(Path(path_out, f'imagesTs_{site_name}'),
+                                                     f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}_0001.nii.gz')
+
+                    # overwritten the subject_sc_file_nnunet with the label for multi-channel training (lesion is part of SC)
+                    subject_sc_file_native = get_multi_channel_label_input(subject_label_file_native, subject_image_file_native,
+                                                                "muc", sub_name, thr=0.5)
+                
 
                 if subject_sc_file is None:
                     print(f"Skipping since the multi-channel label could not be generated")
@@ -462,14 +490,19 @@ def main():
                 # overwritten the subject_label_file with the region-based label
                 subject_label_file = get_region_based_label(subject_label_file, subject_image_file,
                                                             site_name, sub_name, thr=0.5)
+                
+                if site_name == 'straight':
+                    # the native label corresponds to the convention of the "muc" site
+                    subject_label_file_native = get_region_based_label(subject_label_file_native, subject_image_file_native,
+                                                            "muc", sub_name.replace("T2w_desc-straightened","T2w"), thr=0.5)
+
                 if subject_label_file is None:
                     continue
 
             # copy the files to new structure
             shutil.copyfile(subject_image_file, subject_image_file_nnunet)
             shutil.copyfile(subject_label_file, subject_label_file_nnunet)
-            # print(f"\nCopying {subject_image_file} to {subject_image_file_nnunet}")
-            # convert the image and label to RPI using the Image class
+
             image = Image(subject_image_file_nnunet)
             image.change_orientation("RPI")
             image.save(subject_image_file_nnunet)
@@ -478,6 +511,24 @@ def main():
             label.change_orientation("RPI")
             label.save(subject_label_file_nnunet)
 
+            if site_name == 'straight':
+                shutil.copyfile(subject_warping_file, subject_warping_file_nnunet)
+                shutil.copyfile(subject_image_file_native, subject_image_file_native_nnunet)
+                shutil.copyfile(subject_label_file_native, subject_label_file_native_nnunet)
+                image = Image(subject_image_file_native_nnunet)
+                image.change_orientation("RPI")
+                image.save(subject_image_file_native_nnunet)
+                warping_field = Image(subject_warping_file_nnunet)
+                warping_field.change_orientation("RPI")
+                warping_field.save(subject_warping_file_nnunet)
+                label = Image(subject_label_file_native_nnunet)
+                label.change_orientation("RPI")
+                label.save(subject_label_file_native_nnunet)
+
+            # print(f"\nCopying {subject_image_file} to {subject_image_file_nnunet}")
+            # convert the image and label to RPI using the Image class
+
+            # TODO? native label
             if args.multichannel:
                 shutil.copyfile(subject_sc_file, subject_sc_file_nnunet)
                 # convert the SC seg to RPI using the Image class
@@ -487,6 +538,7 @@ def main():
 
             # don't binarize the label if either of the region-based or multi-channel training is set
             if not args.region_based and not args.multichannel:
+                # to do native label?
                 binarize_label(subject_image_file_nnunet, subject_label_file_nnunet)
 
         else:
