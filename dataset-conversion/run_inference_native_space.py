@@ -26,8 +26,8 @@ def process_prediction(pred_file, image_file, warp_field, output_dir):
     subprocess.run(['sct_maths', '-i', pred_file, '-bin', '1', '-o', pred_lesion])
 
     # Apply warping field to the cord and lesion files
-    warped_lesion = os.path.join(output_dir, base_name + '_lesion_warped.nii.gz')
-    warped_cord = os.path.join(output_dir, base_name + '_cord_warped.nii.gz')
+    warped_lesion = os.path.join(os.path.dirname(pred_file), base_name + '_lesion_warped.nii.gz')
+    warped_cord = os.path.join(os.path.dirname(pred_file), base_name + '_cord_warped.nii.gz')
     
     subprocess.run(['sct_apply_transfo', '-i', pred_lesion, '-d', image_file, '-w', warp_field, '-o', warped_lesion])
     subprocess.run(['sct_apply_transfo', '-i', pred_sc, '-d', image_file, '-w', warp_field, '-o', warped_cord])
@@ -50,7 +50,7 @@ def process_prediction(pred_file, image_file, warp_field, output_dir):
     combined_data[cord_data > 0] = 1
     combined_data[lesion_data > 0] = 2
 
-    combined_segmentation = os.path.join(output_dir, base_name + '_combined.nii.gz')
+    combined_segmentation = os.path.join(output_dir, base_name.replace('desc-straightened', 'native') + '.nii.gz')
     combined_img = nib.Nifti1Image(combined_data, cord_img.affine, cord_img.header)
     nib.save(combined_img, combined_segmentation)
 
