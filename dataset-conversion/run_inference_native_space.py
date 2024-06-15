@@ -3,7 +3,6 @@ import glob
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
-from pathlib import Path
 import nibabel as nib
 import numpy as np
 
@@ -83,16 +82,21 @@ if __name__ == "__main__":
     parser.add_argument('--preds-straight', required=True, 
                         help='Path to the folder containing the predictions in straightened space.')
     parser.add_argument('--images-native', required=True, 
-                        help='Path to the folder containing images in the native space.')
+                        help='Path to the folder containing test images in the native space.')
     parser.add_argument('--warps-straight-to-native', required=True, 
-                        help='Path to the folder containing warping fields to go from '
+                        help='Path to the folder containing warping fields of test images to go from '
                         'straight to native space.')
     parser.add_argument('--output', required=True, 
-                        help='Path to the output folder storing the transformed prediction from '
+                        help='Path to the output folder storing the transformed predictions from '
                         'straight to native space.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of parallel workers.')
 
     args = parser.parse_args()
 
     # Run the main function
-    main(args.prediction, args.images, args.warping_fields, args.output, args.num_workers)
+    main(
+        args.preds_straight, 
+        args.images_native, 
+        args.warps_straight_to_native, 
+        args.output, args.num_workers
+    )
