@@ -3,12 +3,13 @@ import glob
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
-import nibabel as nib
-import numpy as np
+from utils import Image
+import copy
 
 # Function to find all .nii.gz files in a folder
 def find_niftis(folder):
-    return sorted(glob.glob(os.path.join(folder, '**', '*.nii.gz'), recursive=True))
+    # return sorted(glob.glob(os.path.join(folder, '**', '*.nii.gz'), recursive=True))
+    return sorted(glob.glob(os.path.join(folder, '**', '*[0-9][0-9][0-9].nii.gz'), recursive=True))
 
 # Function to create output directory if it doesn't exist
 def create_output_folder(folder):
@@ -39,20 +40,20 @@ def process_prediction(pred_file, image_file, warp_field, output_dir):
     subprocess.run(['sct_maths', '-i', warped_lesion, '-bin', '0.5', '-o', thresholded_lesion])
     subprocess.run(['sct_maths', '-i', warped_cord, '-bin', '0.5', '-o', thresholded_cord])
 
-    # Combine the thresholded files into a final segmentation using nibabel
-    cord_img = nib.load(thresholded_cord)
-    lesion_img = nib.load(thresholded_lesion)
+    # NOTE: Strangely, combined image with cord>0 = 1 and lesion>0 = 2 is all good in the numpy array
+    # but when saving with nib.save(), some float values appear in the image. 
+    # as a result, when using np.unique to compute the metrics, it results in values like 0.999912
+    # instead of 1 and 2. Hence, converting everything to SCT's Image class which saves images as uint8
+    # Convert to SCT's Image class to save the files
+    cord_img = Image(thresholded_cord)
+    lesion_img = Image(thresholded_lesion)
 
-    cord_data = cord_img.get_fdata()
-    lesion_data = lesion_img.get_fdata()
-
-    combined_data = np.zeros_like(cord_data)
-    combined_data[cord_data > 0] = 1
-    combined_data[lesion_data > 0] = 2
+    # clone the cord_img class
+    combined = copy.deepcopy(cord_img)
+    combined.data[lesion_img.data > 0] = 2    
 
     combined_segmentation = os.path.join(output_dir, base_name.replace('desc-straightened', 'native') + '.nii.gz')
-    combined_img = nib.Nifti1Image(combined_data, cord_img.affine, cord_img.header)
-    nib.save(combined_img, combined_segmentation)
+    combined.save(combined_segmentation)
 
 def main(prediction_dir, images_dir, warping_fields_dir, output_dir, num_workers):
     prediction_files = find_niftis(prediction_dir)
