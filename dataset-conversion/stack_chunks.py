@@ -42,12 +42,10 @@ def get_parser():
     # Arguments for model, data, and training
     parser.add_argument('-prediction', required=True, type=str,
                         help='Path to the folder with nifti images of test predictions or path to a single nifti image '
-                             'of test prediction.')
+                             'of test prediction chunks.')
     parser.add_argument('-reference', required=True, type=str,
                         help='Path to the folder with nifti images of reference (ground truth) or path to a single '
-                             'nifti image of reference (ground truth).')
-    parser.add_argument('-output', type=str, default='metrics.csv', required=False,
-                        help='Path to the output CSV file to save the metrics. Default: metrics.csv')
+                             'nifti image of reference chunks (ground truth).')
 
     return parser
 
