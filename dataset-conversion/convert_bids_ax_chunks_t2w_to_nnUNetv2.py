@@ -24,6 +24,7 @@ Authors: Julian McGinnis, Naga Karthik, Jan Valosek, Pierre-Louis Benveniste
 """
 
 import argparse
+import subprocess
 from pathlib import Path
 import json
 import os
@@ -39,9 +40,8 @@ import nibabel as nib
 
 
 LABEL_SUFFIXES = {
-    "muc": ["seg-manual", "lesion-manual"],
-    # TODO: revisit the suffixes for testing-large
-    "sct-testing-large": ["acq-ax_T2w_seg-manual", "acq-ax_T2w_lesion-manual"],
+    "tum": ["seg-manual", "lesion-manual"],
+    "testing-large": ["seg-manual", "lesion-manual"],
 }
 
 
@@ -50,6 +50,8 @@ def get_parser():
     parser = argparse.ArgumentParser(description='Convert BIDS-structured dataset to nnUNetV2 REGION-BASED format.')
     parser.add_argument('--path-data', nargs='+', required=True, type=str,
                         help='Path to BIDS dataset(s) (list).')
+    parser.add_argument('--path-json', type=str, default=None,
+                        help='Path to the JSON file containing NeuroPoly and TUM Axial T2w images.')
     parser.add_argument('--path-out', help='Path to output directory.', required=True)
     parser.add_argument('--dataset-name', '-dname', default='DCMlesionsRegionBased', type=str,
                         help='Specify the task name.')
@@ -237,57 +239,66 @@ def main():
 
     # Single site
     sites = list(LABEL_SUFFIXES.keys())
-    create_directories(path_out, sites[0])
+    for site in sites:
+        create_directories(path_out, site)  # create 
+
+    # get all the lesion files from the json file that PL created and shared
+    path_json = args.path_json
+    all_lesion_files_testing_large = []
+    if path_json is not None:
+        with open(path_json, "r") as f:
+            file = json.load(f)
+            for split in ["train", "validation", "test"]:
+                for case in file[split]:
+                    if case['site'] == 'sct-testing-large':
+                        all_lesion_files_testing_large.append(case['label'])
 
     all_lesion_files, train_images, test_images =[], {}, {}
-    subjects_tum, subjects_sct_testing_large = [], []
+    subjects_tum, subjects_testing_large = [], []
     # temp dict for storing dataset commits
     dataset_commits = {}
 
     # loop over the datasets
-    for idx, dataset in enumerate(args.path_data):
+    for dataset in args.path_data:
         root = Path(dataset)
 
         # get the git branch and commit ID of the dataset
         dataset_name = os.path.basename(os.path.normpath(dataset))
         branch, commit = get_git_branch_and_commit(dataset)
         dataset_commits[dataset_name] = f"git-{branch}-{commit}"
-        site_name = sites[idx]
+        site_name = 'tum' if "bavaria" in dataset_name else 'testing-large'
 
-        # get recursively all GT '_label-lesion' files
-        lesion_label_suffix = LABEL_SUFFIXES[site_name][1]
-        lesion_files = [str(path) for path in root.rglob(f'*_{lesion_label_suffix}.nii.gz')]
-
-        # for straigteneing preprocessing, chunk-4 images were removed because there was no SC to straighten
-        # remove the chunk-4 images from the list
-        if sites[idx] == 'muc':
-            lesion_files = [file for file in lesion_files if 'chunk-4' not in file]
-            # get the subject ID and session ID
+        if site_name == 'tum':
+            # get recursively all GT '_label-lesion' files
+            lesion_label_suffix = LABEL_SUFFIXES[site_name][1]
+            lesion_files = [str(path) for path in root.rglob(f'*_{lesion_label_suffix}.nii.gz')]
+            # for straigteneing preprocessing, chunk-4 images were removed because there was no SC to straighten
+            # remove the chunk-4 images from the list
             subjects_tum = [fetch_subject_nifti_details(file)[0] for file in lesion_files]
+            all_lesion_files.extend(lesion_files)
         else:
-            subjects_sct_testing_large = [fetch_subject_nifti_details(file)[0] for file in lesion_files]
+            subjects_testing_large = [fetch_subject_nifti_details(file)[0] for file in all_lesion_files_testing_large]
+            all_lesion_files.extend(all_lesion_files_testing_large)
 
-        # add to the list of all subjects
-        all_lesion_files.extend(lesion_files)
-
-    print(f"Found subjects in the tum dataset: {len(subjects_tum)}")
-    print(f"Found subjects in the sct-testing-large dataset: {len(subjects_sct_testing_large)}")        
     # Get the training and test splits
     # NOTE: we need a patient-wise split (not image-wise split) to ensure that the same patient is not 
     # present in both training and test sets
     subjects_tum = sorted(list(set(subjects_tum)))
-    subjects_sct_testing_large = sorted(list(set(subjects_sct_testing_large)))
+    subjects_testing_large = sorted(list(set(subjects_testing_large)))
     
     # exclude the subjects that are in the exclude list
     if args.exclude is not None:
-        subs = [sub for sub in subjects_tum if sub not in excluded_subs]
+        subs_tum = [sub for sub in subjects_tum if sub not in excluded_subs]
 
-    tr_subs, te_subs = train_test_split(subs, test_size=test_ratio, random_state=args.seed)
+    logger.info(f"Found subjects in the tum dataset: {len(subs_tum)}")
+    logger.info(f"Found subjects in the sct-testing-large dataset: {len(subjects_testing_large)}")        
+
+    tr_subs_tum, te_subs_tum = train_test_split(subs_tum, test_size=test_ratio, random_state=args.seed)
+
+    tr_subs_testing_large, te_subs_testing_large = train_test_split(
+        subjects_testing_large, test_size=test_ratio, random_state=args.seed)
     
-    # add sct_testing_large subjects to the training set
-    tr_subs += subjects_sct_testing_large
-
-    for sub in tr_subs:
+    for sub in tr_subs_tum+tr_subs_testing_large:
         # get the lesion files for the subject
         lesion_files_sub = [file for file in all_lesion_files if sub in file]
 
@@ -298,7 +309,9 @@ def main():
             # add the lesion file to the training set
             train_images[lesion_file] = lesion_file
 
-    for sub in te_subs:
+    logger.info(f"len test set TUM: {len(te_subs_tum)}")
+    logger.info(f"len test set TESTING_LARGE: {len(te_subs_testing_large)}")
+    for sub in te_subs_tum+te_subs_testing_large:
         # get the lesion files for the subject
         lesion_files_sub = [file for file in all_lesion_files if sub in file]
 
@@ -309,14 +322,13 @@ def main():
             # add the lesion file to the test set
             test_images[lesion_file] = lesion_file
 
-    logger.info(f"Found subjects in the training set (combining all datasets): {len(train_images)}")
-    logger.info(f"Found subjects in the test set (combining all datasets): {len(test_images)}")
-
+    logger.info(f"Total images in the training set (combining all datasets): {len(train_images)}")
+    logger.info(f"Total images in the test set (combining all datasets): {len(test_images)}")
+    logger.info(f"len(all lesion files): {len(all_lesion_files)}")
     # print version of each dataset in a separate line
     for dataset_name, dataset_commit in dataset_commits.items():
         logger.info(f"{dataset_name} dataset version: {dataset_commit}")
 
-    exit()
     # Counters for train and test sets
     train_ctr, test_ctr = 0, 0
     train_niftis, test_nifitis = [], []
@@ -325,11 +337,34 @@ def main():
         
         subject_id = fetch_subject_nifti_details(subject_label_file)[0]
         if subject_id.startswith("sub-m"):
-            site_name = 'muc'
+            site_name = 'tum'
+            # Construct path to the background image
+            subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
+
         else:
-            site_name = 'sct-testing-large'
-        # Construct path to the background image
-        subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
+            site_name = 'testing-large'
+            # Construct path to the background image
+            subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
+
+            # also get the image and label from git-annes
+            # NOTE: sct-testing-large has a lot of images which might/might not have labels. 
+            # Get only those images which have labels and are present in the dataframe (and belong to the pathology)
+            dataset_path = "/home/GRAMES.POLYMTL.CA/u114716/datasets/sct-testing-large"
+            gitannex_cmd_label = f'cd {dataset_path}; git annex get {subject_label_file}'
+            gitannex_cmd_image = f'cd {dataset_path}; git annex get {subject_image_file}'
+            
+            # download also the sc seg file
+            subject_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', f'_{LABEL_SUFFIXES[site_name][0]}')
+            gitannex_cmd_seg = f'cd {dataset_path}; git annex get {subject_seg_file}'
+            try:
+                subprocess.run(gitannex_cmd_image, shell=True, check=True)
+                subprocess.run(gitannex_cmd_label, shell=True, check=True)
+                subprocess.run(gitannex_cmd_seg, shell=True, check=True)
+                logger.info(f"Downloaded {os.path.basename(subject_image_file)} from git-annex")
+                logger.info(f"Downloaded {os.path.basename(subject_label_file)} from git-annex")
+                logger.info(f"Downloaded {os.path.basename(subject_seg_file)} from git-annex")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error in downloading {file} from git-annex: {e}")
 
         # Train images
         if subject_label_file in train_images.keys():
@@ -367,6 +402,10 @@ def main():
             label = Image(subject_label_file_nnunet)
             label.change_orientation("RPI")
             label.save(subject_label_file_nnunet)
+
+            # remove the temporary region-based label file
+            if args.region_based:
+                os.remove(subject_label_file)
 
             # don't binarize the label if either of the region-based or multi-channel training is set
             if not args.region_based:
@@ -410,6 +449,10 @@ def main():
 
             # print(f"\nCopying {subject_image_file} to {subject_image_file_nnunet}")
             # convert the image and label to RPI using the Image class
+            
+            # remove the temporary region-based label file
+            if args.region_based:
+                os.remove(subject_label_file)
 
             # don't binarize the label if either of the region-based or multi-channel training is set
             if not args.region_based:
