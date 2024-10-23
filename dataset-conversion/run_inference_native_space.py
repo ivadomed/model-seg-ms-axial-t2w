@@ -8,8 +8,9 @@ import copy
 
 # Function to find all .nii.gz files in a folder
 def find_niftis(folder):
-    # return sorted(glob.glob(os.path.join(folder, '**', '*.nii.gz'), recursive=True))
-    return sorted(glob.glob(os.path.join(folder, '**', '*[0-9][0-9][0-9].nii.gz'), recursive=True))
+    return sorted(glob.glob(os.path.join(folder, '**', '*.nii.gz'), recursive=True))
+    # return sorted(glob.glob(os.path.join(folder, '**', '*[0-9][0-9][0-9].nii.gz'), recursive=True))
+    # return sorted(glob.glob(os.path.join(folder, '**', '*[0-9][0-9][0-9]_straight.nii.gz'), recursive=True))
 
 # Function to create output directory if it doesn't exist
 def create_output_folder(folder):
@@ -52,7 +53,8 @@ def process_prediction(pred_file, image_file, warp_field, output_dir):
     combined = copy.deepcopy(cord_img)
     combined.data[lesion_img.data > 0] = 2    
 
-    combined_segmentation = os.path.join(output_dir, base_name.replace('desc-straightened', 'native') + '.nii.gz')
+    # combined_segmentation = os.path.join(output_dir, base_name.replace('desc-straightened', 'native') + '.nii.gz')
+    combined_segmentation = os.path.join(output_dir, base_name.replace('straight', 'native') + '.nii.gz')
     combined.save(combined_segmentation)
 
 def main(prediction_dir, images_dir, warping_fields_dir, output_dir, num_workers):
