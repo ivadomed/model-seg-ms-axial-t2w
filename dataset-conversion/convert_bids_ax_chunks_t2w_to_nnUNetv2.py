@@ -41,7 +41,9 @@ import nibabel as nib
 
 LABEL_SUFFIXES = {
     "tum": ["seg-manual", "lesion-manual"],
-    "testing-large": ["seg-manual", "lesion-manual"],
+    "nyu": ["seg-manual", "lesion-manual"],
+    "bwh": ["seg-manual", "lesion-manual"],
+    "ucsf": ["seg-manual", "lesion-manual"],
 }
 
 
@@ -98,11 +100,15 @@ def create_directories(path_out, site):
     path_out (str): Base output directory.
     site (str): Site identifier, such as 'dcm-zurich-lesions
     """
-    paths = [Path(path_out, f'imagesTs_{site}'),
-             Path(path_out, f'labelsTs_{site}'),]
+    # keep nyu only for training
+    if site == 'nyu':
+        pass
+    else:
+        paths = [Path(path_out, f'imagesTs_{site}'),
+                Path(path_out, f'labelsTs_{site}'),]
 
-    for path in paths:
-        path.mkdir(parents=True, exist_ok=True)
+        for path in paths:
+            path.mkdir(parents=True, exist_ok=True)
 
 
 def fetch_subject_nifti_details(filename_path):
@@ -237,11 +243,6 @@ def main():
         logger.info(f"Excluded subjects: {excluded_subs}")
         logger.info(f"Number of excluded subjects: {len(excluded_subs)}")
 
-    # Single site
-    sites = list(LABEL_SUFFIXES.keys())
-    for site in sites:
-        create_directories(path_out, site)  # create 
-
     # get all the lesion files from the json file that PL created and shared
     path_json = args.path_json
     all_lesion_files_testing_large = []
@@ -253,14 +254,34 @@ def main():
                     if case['site'] == 'sct-testing-large':
                         all_lesion_files_testing_large.append(case['label'])
 
+    # create directories for each site
+    sites = list(LABEL_SUFFIXES.keys())
+    for site in sites:
+        create_directories(path_out, site)
+
     all_lesion_files, train_images, test_images =[], {}, {}
-    subjects_tum, subjects_testing_large = [], []
     # temp dict for storing dataset commits
     dataset_commits = {}
+
+    lesion_files_nyu, lesion_files_ucsf, lesion_files_bwh = [], [], []
+    subjects_tum, subjects_nyu, subjects_ucsf, subjects_bwh = [], [], [], []
+    # split all lesion files from testing large into individual sites
+    for lesion_file in all_lesion_files_testing_large:
+        subject_id = fetch_subject_nifti_details(lesion_file)[0]
+        if subject_id.startswith("sub-nyuShepherd"):
+            lesion_files_nyu.append(lesion_file)
+            subjects_nyu.append(subject_id)
+        elif subject_id.startswith("sub-ucsf"):
+            lesion_files_ucsf.append(lesion_file)
+            subjects_ucsf.append(subject_id)
+        elif subject_id.startswith("sub-bwh"):
+            lesion_files_bwh.append(lesion_file)
+            subjects_bwh.append(subject_id)
 
     # loop over the datasets
     for dataset in args.path_data:
         root = Path(dataset)
+        print(root)
 
         # get the git branch and commit ID of the dataset
         dataset_name = os.path.basename(os.path.normpath(dataset))
@@ -276,29 +297,39 @@ def main():
             # remove the chunk-4 images from the list
             subjects_tum = [fetch_subject_nifti_details(file)[0] for file in lesion_files]
             all_lesion_files.extend(lesion_files)
-        else:
-            subjects_testing_large = [fetch_subject_nifti_details(file)[0] for file in all_lesion_files_testing_large]
-            all_lesion_files.extend(all_lesion_files_testing_large)
+        # else:
+        #     subjects_testing_large = [fetch_subject_nifti_details(file)[0] for file in all_lesion_files_testing_large]
+        #     all_lesion_files.extend(all_lesion_files_testing_large)
+    
+    # add lesion files for other sites
+    all_lesion_files.extend(lesion_files_nyu)
+    all_lesion_files.extend(lesion_files_ucsf)
+    all_lesion_files.extend(lesion_files_bwh)
 
     # Get the training and test splits
     # NOTE: we need a patient-wise split (not image-wise split) to ensure that the same patient is not 
     # present in both training and test sets
     subjects_tum = sorted(list(set(subjects_tum)))
-    subjects_testing_large = sorted(list(set(subjects_testing_large)))
+    subjects_ucsf, subjects_bwh = sorted(list(set(subjects_ucsf))), sorted(list(set(subjects_bwh)))
+    subjects_nyu = sorted(list(set(subjects_nyu)))
     
     # exclude the subjects that are in the exclude list
     if args.exclude is not None:
         subs_tum = [sub for sub in subjects_tum if sub not in excluded_subs]
 
     logger.info(f"Found subjects in the tum dataset: {len(subs_tum)}")
-    logger.info(f"Found subjects in the sct-testing-large dataset: {len(subjects_testing_large)}")        
+    logger.info(f"Found subjects in the sct-testing-large: ")
+    logger.info(f"\tNYU: {len(subjects_nyu)}")
+    logger.info(f"\tBWH: {len(subjects_bwh)}")
+    logger.info(f"\tUCSF: {len(subjects_ucsf)}")
 
     tr_subs_tum, te_subs_tum = train_test_split(subs_tum, test_size=test_ratio, random_state=args.seed)
 
-    tr_subs_testing_large, te_subs_testing_large = train_test_split(
-        subjects_testing_large, test_size=test_ratio, random_state=args.seed)
+    # tr_subs_testing_large, te_subs_testing_large = train_test_split(
+    #     subjects_testing_large, test_size=test_ratio, random_state=args.seed)
     
-    for sub in tr_subs_tum+tr_subs_testing_large:
+    # add only nyu site for training
+    for sub in tr_subs_tum + subjects_nyu:
         # get the lesion files for the subject
         lesion_files_sub = [file for file in all_lesion_files if sub in file]
 
@@ -309,9 +340,9 @@ def main():
             # add the lesion file to the training set
             train_images[lesion_file] = lesion_file
 
-    logger.info(f"len test set TUM: {len(te_subs_tum)}")
-    logger.info(f"len test set TESTING_LARGE: {len(te_subs_testing_large)}")
-    for sub in te_subs_tum+te_subs_testing_large:
+    # logger.info(f"len test set TUM: {len(te_subs_tum)}")
+    # logger.info(f"len test set TESTING_LARGE: {len(te_subs_testing_large)}")
+    for sub in te_subs_tum + subjects_ucsf + subjects_bwh:
         # get the lesion files for the subject
         lesion_files_sub = [file for file in all_lesion_files if sub in file]
 
@@ -322,8 +353,10 @@ def main():
             # add the lesion file to the test set
             test_images[lesion_file] = lesion_file
 
-    logger.info(f"Total images in the training set (combining all datasets): {len(train_images)}")
-    logger.info(f"Total images in the test set (combining all datasets): {len(test_images)}")
+    logger.info(f"Total subjects (not images) in the training set: {len(tr_subs_tum) + len(subjects_nyu)}")
+    logger.info(f"Total subjects (not images) in the test set: {len(te_subs_tum) + len(subjects_ucsf) + len(subjects_bwh)}")
+    logger.info(f"Total images in the training set: {len(train_images)}")
+    logger.info(f"Total images in the test set: {len(test_images)}")
     logger.info(f"len(all lesion files): {len(all_lesion_files)}")
     # print version of each dataset in a separate line
     for dataset_name, dataset_commit in dataset_commits.items():
@@ -342,7 +375,12 @@ def main():
             subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
 
         else:
-            site_name = 'testing-large'
+            if subject_id.startswith("sub-nyu"):
+                site_name = 'nyu'   
+            elif subject_id.startswith("sub-ucsf"):
+                site_name = 'ucsf'
+            elif subject_id.startswith("sub-bwh"):
+                site_name = 'bwh'
             # Construct path to the background image
             subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
 
@@ -464,30 +502,30 @@ def main():
 
     logger.info(f"----- Dataset conversion finished! -----")
     logger.info(f"Number of training and validation images (across all sites): {train_ctr}")
-    # Get number of train and val images per site
-    train_images_per_site = {}
-    for train_subject in train_images:
-        site = sites[0]
-        if site in train_images_per_site:
-            train_images_per_site[site] += 1
-        else:
-            train_images_per_site[site] = 1
-    # Print number of train images per site
-    for site, num_images in train_images_per_site.items():
-        logger.info(f"Number of training and validation images in {site}: {num_images}")
+    # # Get number of train and val images per site
+    # train_images_per_site = {}
+    # for train_subject in train_images:
+    #     site = sites[0]
+    #     if site in train_images_per_site:
+    #         train_images_per_site[site] += 1
+    #     else:
+    #         train_images_per_site[site] = 1
+    # # Print number of train images per site
+    # for site, num_images in train_images_per_site.items():
+    #     logger.info(f"Number of training and validation images in {site}: {num_images}")
 
     logger.info(f"Number of test images (across all sites): {test_ctr}")
-    # Get number of test images per site
-    test_images_per_site = {}
-    for test_subject in test_images:
-        site = sites[0]
-        if site in test_images_per_site:
-            test_images_per_site[site] += 1
-        else:
-            test_images_per_site[site] = 1
-    # Print number of test images per site
-    for site, num_images in test_images_per_site.items():
-        logger.info(f"Number of test images in {site}: {num_images}")
+    # # Get number of test images per site
+    # test_images_per_site = {}
+    # for test_subject in test_images:
+    #     site = sites[0]
+    #     if site in test_images_per_site:
+    #         test_images_per_site[site] += 1
+    #     else:
+    #         test_images_per_site[site] = 1
+    # # Print number of test images per site
+    # for site, num_images in test_images_per_site.items():
+    #     logger.info(f"Number of test images in {site}: {num_images}")
 
     # create the yaml file containing the train and test niftis
     create_yaml(train_niftis, test_nifitis, path_out, args, train_ctr, test_ctr, dataset_commits)
