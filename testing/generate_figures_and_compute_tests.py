@@ -202,6 +202,68 @@ def create_rainplot(df, metrics, path_figures, pred_type):
         logger.info(f'Created: {fname_fig}')
 
 
+def create_regplot_lesion_count(df, path_figures):
+    """
+    Create a seaborn lmplot for reference vs predicted lesion count comparing 2D and 3D models
+    :param df: dataframe with segmentation metrics
+    :param path_figures: path to the folder where the figures will be saved
+    :return:
+    """
+    # Set up a 2x2 plotting grid (assuming 4 datasets)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    axes = axes.flatten()
+
+    # Loop over each dataset and plot 2D and 3D models with regression lines
+    for i, dataset in enumerate(df['dataset'].unique()):
+        dataset_data = df[df['dataset'] == dataset]
+        
+        # Plot 2D model with regression line and 95% confidence interval
+        sns.regplot(
+            x='RefLesionsCount', y='PredLesionsCount', 
+            data=dataset_data[dataset_data['model'] == '2D'], label='2D Model',
+            ax=axes[i], scatter=True, scatter_kws={'color': PALETTE[1]},
+            ci=95, line_kws={'color': PALETTE[1]}, marker='^'
+        )
+        
+        # Plot 3D model with regression line and 95% confidence interval
+        sns.regplot(
+            x='RefLesionsCount', y='PredLesionsCount', 
+            data=dataset_data[dataset_data['model'] == '3D'], label='3D Model',
+            ax=axes[i], scatter=True, scatter_kws={'color': PALETTE[0]},
+            ci=95, line_kws={'color': PALETTE[0]}, marker='o'
+        )
+
+        # Set x and y limits
+        axes[i].set_xlim(-1, 16)
+        axes[i].set_ylim(-1, 16)
+        
+        # increase font size for x and y ticks
+        axes[i].tick_params(axis='both', which='major', labelsize=TICK_FONT_SIZE)
+        # increase font size for x and y labels
+        axes[i].set_xlabel('Reference Lesions Count', fontsize=LABEL_FONT_SIZE)
+        axes[i].set_ylabel('Predicted Lesions Count', fontsize=LABEL_FONT_SIZE)
+        
+        # Add a dashed line to show perfect prediction line
+        axes[i].plot([-1, 16], [-1, 16], 'k--', label='Ideal')
+        
+        # Set title, labels, and legend for each subplot
+        title = order_datasets_tum[dataset].replace('\n', ' ')
+        axes[i].set_title(f'Dataset: {title}', fontsize=LABEL_FONT_SIZE+2, fontweight='bold')
+        axes[i].set_xlabel('Reference Lesions Count')
+        axes[i].set_ylabel('Predicted Lesions Count')
+        axes[i].legend(fontsize=LABEL_FONT_SIZE)
+
+    # add a title to the figure (bold)
+    fig.suptitle('Reference vs Predicted Lesion Count across Datasets', fontsize=LABEL_FONT_SIZE+3, fontweight='bold')
+
+    # Adjust layout to avoid overlap
+    plt.tight_layout()
+    # save figure
+    fname_fig = os.path.join(path_figures, f'regplot_LesionCount.png')
+    plt.savefig(fname_fig, dpi=300, bbox_inches='tight')
+    plt.close()
+
+
 def format_pvalue(p_value, decimal_places=3, include_space=False, include_equal=True):
     """
     Format p-value.
@@ -281,7 +343,7 @@ def compute_wilcoxon_test(df_concat, list_of_metrics):
                         f'unformatted p={p:0.6f}')
 
             # Compute Wilcoxon signed-rank test
-            stat, p = wilcoxon(df[metric + '_2d'], df[metric + '_3d'])
+            stat, p = wilcoxon(df[metric + '_2d'], df[metric + '_3d'], alternative='greater')
             logger.info(f'{metric}, {dataset}: Wilcoxon signed-rank test between nnUNet2D and nnUNet3D: '
                         f'formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
 
@@ -350,16 +412,40 @@ def main():
     
     print(f"Total files: {num_csvs}")
     print(f"Total Rows: {len(df_mega)}")
+    
+    # remove from stitched datasets
+    # these files were causing discrepancies in the total number of subjects between datasets
+    exclude_files = [
+        'tumMSStitchedRegion_sub-m514993_ses-20230123_acq-ax_T2w',
+        'tumMSStitchedRegion_sub-m072952_ses-20190531_acq-ax_T2w',
+        'tumMSStitchedStraightRegion_sub-m514993_ses-20230123_acq-ax_T2w',
+        'tumMSStitchedStraightRegion_sub-m072952_ses-20190531_acq-ax_T2w',
+    ]
+    df_mega = df_mega[~df_mega['prediction'].str.contains('|'.join(exclude_files))]
 
-    metrics_to_plot = {'DiceSimilarityCoefficient': 'Dice Score',}
+
     if args.pred_type == 'lesion':
-        metrics_to_plot['LesionWiseF1Score'] = 'Lesion-wise F1 Score' 
+        metrics_to_plot = {
+            'DiceSimilarityCoefficient': 'Dice Score',
+            'RelativeVolumeError': 'Relative Volume Error',
+            'LesionWiseF1Score': 'Lesion-wise F1 Score',
+        }
+    elif args.pred_type == 'sc':
+        metrics_to_plot = {
+            'DiceSimilarityCoefficient': 'Dice Score',
+            'RelativeVolumeError': 'Relative Volume Error',
+        }
         
-    # # generate raincloud plots    
-    # create_rainplot(df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
+    # generate raincloud plots    
+    create_rainplot(df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
 
-    # compute statistical tests
-    compute_wilcoxon_test(df_mega, metrics_to_plot.keys())
+    if args.pred_type == 'lesion':
+
+        # generate regplot for additional metrics
+        create_regplot_lesion_count(df_mega, path_out)
+        
+        # compute statistical tests
+        compute_wilcoxon_test(df_mega, metrics_to_plot.keys())
 
 
 
