@@ -13,9 +13,6 @@ import ptitprince as pt
 from scipy.stats import wilcoxon, normaltest, kruskal
 from statsmodels.stats.multitest import multipletests
 
-metrics_lesion = ['dsc', 'nsd', 'lesion_ppv', 'lesion_sensitivity', 'lesion_f1_score'] #, 'lcwa']
-metrics_sc = ['dsc', 'nsd']
-
 LABEL_FONT_SIZE = 14
 TICK_FONT_SIZE = 12
 PALETTE = ['red', 'darkblue']
@@ -95,9 +92,11 @@ def find_model_in_path(path):
     if match:
         return '2D' if '2d' in match.group(0) else '3D'
 
+
 def find_filename_in_path(path):
     fname = path.split('/')[-1]
     return fname.split('.')[0]
+
 
 def create_rainplot(df, metrics, path_figures, pred_type):
     """
@@ -113,11 +112,7 @@ def create_rainplot(df, metrics, path_figures, pred_type):
     # mpl.rcParams['font.family'] = 'Helvetica'
 
     for metric in metrics.keys():
-
-        # # Drop rows with NaN values for the current metric
-        # df_temp = df.dropna(subset=[metric])
-
-        fig_size = (10, 5) if pred_type == 'sc' else (9, 6)
+        fig_size = (9, 5.5) # if pred_type == 'sc' else (9, 5.5)
         fig, ax = plt.subplots(figsize=fig_size)
         ax = pt.RainCloud(data=df,
                           x='dataset',
@@ -172,10 +167,7 @@ def create_rainplot(df, metrics, path_figures, pred_type):
         # Modify x-ticks labels
         ax.set_xticklabels(order_datasets_tum.values(), #if pred_type == 'sc' else METHODS_TO_LABEL_LESION.values(),
                            fontsize=TICK_FONT_SIZE)
-        # # Increase y-axis label font size
-        # if metric == 'RelativeVolumeError':
-        #     ax.set_ylabel(split_string_by_capital_letters(metric) + ' [%]', fontsize=TICK_FONT_SIZE)
-        # else:
+        # Increase y-axis label font size
         ax.set_ylabel(metric, fontsize=TICK_FONT_SIZE)
         # Increase y-ticks font size
         ax.tick_params(axis='y', labelsize=TICK_FONT_SIZE)
@@ -186,32 +178,26 @@ def create_rainplot(df, metrics, path_figures, pred_type):
         # elif metric == 'RelativeVolumeError' and pred_type == 'lesion':
         #     ax.set_ylim(-125, 125)
 
-        # if metric == 'SurfaceDistance' and pred_type == 'sc':
-        #     ax.set_ylim(0, 15)
-
         # Set title
         if pred_type == 'sc':
-            # ax.set_title(f'Test {split_string_by_capital_letters(metric)} for Spinal Cord Segmentation across {num_of_seeds} seeds',
-            #              fontsize=LABEL_FONT_SIZE)
-            pass
+            ax.set_title(f'Test {metrics[metric]} for Spinal Cord Segmentation', fontsize=LABEL_FONT_SIZE)
         else:
-            ax.set_title(f'Test {metrics[metric]} for Lesion Segmentation across 3 folds',
-                         fontsize=LABEL_FONT_SIZE)
+            ax.set_title(f'Test {metrics[metric]} for Lesion Segmentation', fontsize=LABEL_FONT_SIZE)
 
         # Move grid to background (i.e. behind other elements)
         ax.set_axisbelow(True)
         # Add horizontal grid lines and change its opacity
         ax.yaxis.grid(True, alpha=0.3)
         # modify the y-axis ticks
-        if metric == "DiceSimilarityCoefficient" and pred_type == 'lesion':
+        if pred_type == 'lesion' and metric != 'RelativeVolumeError':
             ax.set_yticks(np.arange(0, 1.1, 0.1))
-        else:
-            ax.set_yticks(np.arange(0.75, 1.025, 0.05))
+        elif pred_type == 'sc' and metric != 'RelativeVolumeError':
+            ax.set_yticks(np.arange(0.6, 1.025, 0.05))
         
         plt.tight_layout()
 
         # save figure
-        fname_fig = os.path.join(path_figures, f'{pred_type}_rainplot_{metric}.png')
+        fname_fig = os.path.join(path_figures, f'rainplot_{pred_type}_{metric}.png')
         plt.savefig(fname_fig, dpi=300, bbox_inches='tight')
         plt.close()
         logger.info(f'Created: {fname_fig}')
@@ -362,6 +348,7 @@ def main():
             df_models = pd.concat([df_models, df_folds])
 
         df_mega = pd.concat([df_mega, df_models])
+    
     print(f"Total files: {num_csvs}")
     print(f"Total Rows: {len(df_mega)}")
 
