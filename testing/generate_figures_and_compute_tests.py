@@ -141,15 +141,14 @@ def create_rainplot(df, metrics, path_figures, pred_type):
             r, g, b, a = patch.get_facecolor()
             patch.set_facecolor((r, g, b, .0))
 
-        # # Include number of subjects for each site into the legend
-        # handles, labels = ax.get_legend_handles_labels()
-        # for i, label in enumerate(labels):
-        #     n = len(df_temp[(df_temp['site'] == label) & (df_temp['method'] == 'nnunet_3d')]['participant_id'])
-        #     labels[i] = f'{label} ' + '($\it{n}$' + f' = {n})'
-        # # Since the figure contains violionplot + boxplot + scatterplot we are keeping only last two legend entries
-        # handles = handles[-2:]
-        # labels = labels[-2:]
-        # ax.legend(handles, labels, fontsize=TICK_FONT_SIZE)
+        # Include number of subjects for each site into the legend
+        handles, labels = ax.get_legend_handles_labels()
+        for i, label in enumerate(labels):
+            n = len(df[(df['dataset'] == list(order_datasets_tum.keys())[0]) & (df['model'] == label)])
+            labels[i] = f'{label} Model' + ' ($\it{n}$' + f' = {n})'
+        # Since the figure contains violionplot + boxplot + scatterplot we are keeping only last two legend entries
+        handles, labels = handles[-2:], labels[-2:]
+        ax.legend(handles, labels, fontsize=TICK_FONT_SIZE, loc='lower center', bbox_to_anchor=(0.5, -0.25), ncol=2)
 
         # Make legend box's frame color black and remove transparency
         legend = ax.get_legend()
