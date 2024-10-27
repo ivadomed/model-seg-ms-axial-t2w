@@ -7,7 +7,6 @@ import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 from datetime import datetime
 import ptitprince as pt
 from scipy.stats import wilcoxon, normaltest, kruskal
@@ -30,17 +29,22 @@ order_datasets_tum = {
     #  "Dataset910_tumMSChunksPolyNYUAxialRegion": 'Chunks\nPolyNYU',
 }
 
-# order_datasets_deepseg_lesion = [
-#     'stitched_straight\nregion-based', 'chunks_straight\nregion-based', 'chunks_native\nregion-based', 'stitched_native\nregion-based',
-# ]
-order_datasets_testing_large = [
-    'chunks_native\ntum', 'chunks_native\ntum_polyNYU', # 'deepseg_lesion',
-]
+order_datasets_testing_large = {
+    "DeepSegLesionInference_tumNeuropoly": 'DeepSeg\nLesion',
+    "Dataset901_tumMSChunksRegion": 'ChunksNative\nSingleSite',
+    "Dataset910_tumMSChunksPolyNYUAxialRegion": 'ChunksNative\nTwoSites',
+}
 
 order_datasets_muc_vs_neuropoly = [
     'stitched_straight\ntum', 'chunks_straight\ntum', 'chunks_native\ntum', 'stitched_native\ntum',
     'chunks_native\ntum_neuropoly'
 ]
+
+metrics_short = {
+    'DiceSimilarityCoefficient': 'Dice',
+    'RelativeVolumeError': 'RVE',
+    'LesionWiseF1Score': 'LesionF1',
+}
 
 
 def get_parser():
@@ -177,12 +181,6 @@ def create_rainplot(args, df, metrics, path_figures, pred_type):
         ax.set_ylabel(metric, fontsize=TICK_FONT_SIZE)
         # Increase y-ticks font size
         ax.tick_params(axis='y', labelsize=TICK_FONT_SIZE)
-
-        # # Adjust y-lim for 'RelativeVolumeError' metric
-        # if metric == 'RelativeVolumeError' and pred_type == 'sc':
-        #     ax.set_ylim(-95, 62)
-        # elif metric == 'RelativeVolumeError' and pred_type == 'lesion':
-        #     ax.set_ylim(-125, 125)
 
         # Set title
         if pred_type == 'sc':
@@ -510,12 +508,14 @@ def main():
 
     args = get_parser().parse_args()
     path_out = args.o
-    if not os.path.exists(path_out):
-        os.makedirs(path_out, exist_ok=True)
 
     num_models_to_compare = len(args.i)
     if num_models_to_compare < 2:
         raise ValueError("Please provide at least two models to compare")
+
+    date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path_out = f"{path_out}_{date_time}"
+    logger.add(os.path.join(path_out, 'log.txt'), rotation='10 MB', level='INFO')
     
     df_mega = pd.DataFrame()
     num_csvs = 0
@@ -540,14 +540,14 @@ def main():
             for fld in folds:
 
                 # recursively find anima_metrics_mean_lesion.csv
-                files = glob.glob(os.path.join(fldr, model, fld, f'test_{test_site}*', f'metrics_final_{args.pred_type}.csv'))
+                files = glob.glob(os.path.join(fldr, model, fld, f'test_{test_site}*', f'metrics_final_{args.pred_type}.csv'))                
                 # files = glob.glob(os.path.join(fldr, model, fld, f'test_{test_site}*', 'metrics_updated.csv'))
                 if not files:
                     # NOTE: then, this is the multi-channel model
                     # files = glob.glob(os.path.join(fldr, model, fld, 'test_*', 'anima_stats', 'anima_metrics_mean.csv'))
                     continue
 
-                print(f"Processing: {files[0].replace('/home/GRAMES.POLYMTL.CA/u114716/nnunet-v2/nnUNet_results', '')}")
+                logger.info(f"Processing: {files[0].replace(f'{os.path.dirname(fldr)}', '')}")
                 num_csvs += 1
 
                 df = pd.read_csv(files[0])
@@ -565,10 +565,7 @@ def main():
             df_models = pd.concat([df_models, df_folds])
 
         df_mega = pd.concat([df_mega, df_models])
-    
-    print(f"Total files: {num_csvs}")
-    print(f"Total Rows: {len(df_mega)}")
-    
+        
     # remove from stitched datasets
     # these files were causing discrepancies in the total number of subjects between datasets
     exclude_files = [
@@ -579,11 +576,9 @@ def main():
     ]
     df_mega = df_mega[~df_mega['prediction'].str.contains('|'.join(exclude_files))]
 
-
     if args.pred_type == 'lesion':
         metrics_to_plot = {
             'DiceSimilarityCoefficient': 'Dice Score',
-            'RelativeVolumeError': 'Relative Volume Error',
             'LesionWiseF1Score': 'Lesion-wise F1 Score',
         }
     elif args.pred_type == 'sc':
