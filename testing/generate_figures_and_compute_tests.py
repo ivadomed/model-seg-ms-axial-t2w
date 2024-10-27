@@ -423,6 +423,79 @@ def compute_kruskal_wallis_test_across_tum_datasets(df_concat, list_of_metrics):
         logger.info('')
 
 
+def compute_kruskal_wallis_test_across_tum_poly(df_concat, list_of_metrics, test_site):
+    """
+    Compute Kruskal-Wallis H-test (non-parametric version of ANOVA)
+    https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kruskal.html
+    :param df_concat:
+    :param list_of_metrics:
+    :return:
+    """
+    logger.info('')
+
+    # keep only the filenames for reference and prediction
+    df_concat['reference'] = df_concat['reference'].apply(find_filename_in_path)
+    df_concat['prediction'] = df_concat['prediction'].apply(find_filename_in_path)
+
+    # Loop across sites
+    # for site in df_concat['site'].unique():
+    # Loop across metrics
+    for metric in list_of_metrics:
+        
+        # create individual dataframes for each model
+        df_chunks_single_site_2d = df_concat[(df_concat['dataset'] == 'Dataset901_tumMSChunksRegion') & (df_concat['model'] == '2D')]
+        df_chunks_two_sites_2d = df_concat[(df_concat['dataset'] == 'Dataset910_tumMSChunksPolyNYUAxialRegion') & (df_concat['model'] == '2D')]
+        df_deepseg_lesion = df_concat[(df_concat['dataset'] == 'DeepSegLesionInference_tumNeuropoly') & (df_concat['model'] == '3D')]
+
+        # ensure that the two dataframes have the same number of rows
+        assert len(df_chunks_single_site_2d) == len(df_chunks_two_sites_2d) == len(df_deepseg_lesion), \
+            f"Number of subjects differ across datasets, paired tests cannot be performed"
+
+        # run normality test
+        stat, p = normaltest(df_chunks_single_site_2d[metric])
+        logger.info(f'{metrics_short[metric]}: Normality test for nnUNet2D single-site: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+        stat, p = normaltest(df_chunks_two_sites_2d[metric])
+        logger.info(f'{metrics_short[metric]}: Normality test for nnUNet2D two-sites: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+        stat, p = normaltest(df_deepseg_lesion[metric])
+        logger.info(f'{metrics_short[metric]}: Normality test for DeepSegLesionInference: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+
+        # Combine all dataframes based on 'prediction', 'fold' columns, and the metric column
+        df = pd.DataFrame({
+            'prediction': df_chunks_single_site_2d['prediction'].values,  # Assuming 'prediction' is a common column in all dataframes
+            'fold': df_chunks_single_site_2d['fold'].values,  # Assuming 'fold' is a common column in all dataframes
+            f'{metric}_chunks_single_site_2d': df_chunks_single_site_2d[metric].values,
+            f'{metric}_chunks_two_sites_2d': df_chunks_two_sites_2d[metric].values,
+            f'{metric}_deepseg_lesion': df_deepseg_lesion[metric].values
+        })
+
+        # Print number of subjects
+        logger.info(f'{metrics_short[metric]}; Number of subjects: {len(df)}; Test site: {test_site.upper()}')
+
+        # Compute Kruskal-Wallis H-test
+        stat, p = kruskal(df[metric + '_chunks_single_site_2d'], df[metric + '_chunks_two_sites_2d'], df[metric + '_deepseg_lesion'])
+        logger.info(f'{metrics_short[metric]}: Kruskal-Wallis H-test: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+
+        # Run post-hoc tests between _chunks_native_2d (i.e. best model) and all other methods
+        if p < 0.05:
+            p_val_dict = {}
+            for method in ['chunks_single_site_2d', 'deepseg_lesion']:
+                # NOTE: here, we are computing pair-wise tests between: 
+                # (i) two-sites and single-site model, and (ii) two-sites and deepseg_lesion model
+                # to conclude whether the two-sites model is significantly better than the other two
+                stats, p = wilcoxon(df[metric + '_chunks_two_sites_2d'], df[metric + '_' + method], alternative='greater')
+                p_val_dict[method] = p
+            # Do Bonferroni correction
+            # https://www.statsmodels.org/dev/generated/statsmodels.stats.multitest.multipletests.html
+            _, pvals_corrected, _, _ = multipletests(list(p_val_dict.values()), alpha=0.05, method='bonferroni')
+            p_val_dict_corrected = dict(zip(list(p_val_dict.keys()), pvals_corrected))
+            # Format p-values using format_pvalue function
+            p_val_dict_corrected = {k: format_pvalue(v) for k, v in p_val_dict_corrected.items()}
+            logger.info(f'{metrics_short[metric]}: Post-hoc tests between _chunks_two_sites_2d and all other methods for site {test_site.upper()}:\n'
+                        f'{p_val_dict_corrected}')
+        
+        logger.info('')
+
+
 
 def main():
 
