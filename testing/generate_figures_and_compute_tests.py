@@ -56,6 +56,9 @@ def get_parser():
                         help='Results to compare from which site: `muc` (TUM MS) or `deepseg`')
     parser.add_argument('-pred-type', type=str, required=True,
                         help='Type of prediction to create plots for: `sc` (spinal cord segmentation) or `lesion`')
+    parser.add_argument('-compare-across', type=str, required=True, choices=['tum', 'tum-poly'],
+                        help='Compare the models performance across TUM datasets (tum) i.e. single site'
+                         'or across TUM, Poly datasets i.e. two sites')
 
     return parser
 
@@ -98,7 +101,7 @@ def find_filename_in_path(path):
     return fname.split('.')[0]
 
 
-def create_rainplot(df, metrics, path_figures, pred_type):
+def create_rainplot(args, df, metrics, path_figures, pred_type):
     """
     Create Raincloud plots (violionplot + boxplot + individual points)
     :param df: dataframe with segmentation metrics
@@ -110,6 +113,10 @@ def create_rainplot(df, metrics, path_figures, pred_type):
     """
 
     # mpl.rcParams['font.family'] = 'Helvetica'
+    if args.compare_across == 'tum-poly':
+        order_datasets = order_datasets_testing_large
+    else:
+        order_datasets = order_datasets_tum
 
     for metric in metrics.keys():
         fig_size = (9, 5.5) # if pred_type == 'sc' else (9, 5.5)
@@ -119,12 +126,12 @@ def create_rainplot(df, metrics, path_figures, pred_type):
                           y=metric,
                           hue='model',
                           palette=PALETTE,
-                          order=order_datasets_tum.keys(), #if pred_type == 'sc' else METHODS_TO_LABEL_LESION.keys(),
+                          order=order_datasets.keys(), #if pred_type == 'sc' else METHODS_TO_LABEL_LESION.keys(),
                           dodge=True,       # move boxplots next to each other
                           linewidth=0,      # violionplot border line (0 - no line)
                           width_viol=.5,    # violionplot width
                           width_box=.3,     # boxplot width
-                          rain_alpha=.7,    # individual points transparency - https://github.com/pog87/PtitPrince/blob/23debd9b70fca94724a06e72e049721426235f50/ptitprince/PtitPrince.py#L707
+                          rain_alpha=.7,    # individual points transparency
                           rain_s=2,         # individual points size
                           alpha=.7,         # violin plot transparency
                           box_showmeans=True,  # show mean value inside the boxplots
@@ -144,7 +151,7 @@ def create_rainplot(df, metrics, path_figures, pred_type):
         # Include number of subjects for each site into the legend
         handles, labels = ax.get_legend_handles_labels()
         for i, label in enumerate(labels):
-            n = len(df[(df['dataset'] == list(order_datasets_tum.keys())[0]) & (df['model'] == label)])
+            n = len(df[(df['dataset'] == list(order_datasets.keys())[0]) & (df['model'] == label)])
             labels[i] = f'{label} Model' + ' ($\it{n}$' + f' = {n})'
         # Since the figure contains violionplot + boxplot + scatterplot we are keeping only last two legend entries
         handles, labels = handles[-2:], labels[-2:]
@@ -164,7 +171,7 @@ def create_rainplot(df, metrics, path_figures, pred_type):
         # Remove x-axis label
         ax.set_xlabel('')
         # Modify x-ticks labels
-        ax.set_xticklabels(order_datasets_tum.values(), #if pred_type == 'sc' else METHODS_TO_LABEL_LESION.values(),
+        ax.set_xticklabels(order_datasets.values(), #if pred_type == 'sc' else METHODS_TO_LABEL_LESION.values(),
                            fontsize=TICK_FONT_SIZE)
         # Increase y-axis label font size
         ax.set_ylabel(metric, fontsize=TICK_FONT_SIZE)
@@ -202,13 +209,15 @@ def create_rainplot(df, metrics, path_figures, pred_type):
         logger.info(f'Created: {fname_fig}')
 
 
-def create_regplot_lesion_count(df, path_figures):
+def create_regplot_lesion_count(args,df, path_figures):
     """
     Create a seaborn lmplot for reference vs predicted lesion count comparing 2D and 3D models
     :param df: dataframe with segmentation metrics
     :param path_figures: path to the folder where the figures will be saved
     :return:
     """
+    order_datasets = order_datasets_tum if args.compare_across == 'tum' else order_datasets_testing_large
+
     # Set up a 2x2 plotting grid (assuming 4 datasets)
     fig, axes = plt.subplots(2, 2, figsize=(14, 12))
     axes = axes.flatten()
@@ -247,7 +256,7 @@ def create_regplot_lesion_count(df, path_figures):
         axes[i].plot([-1, 16], [-1, 16], 'k--', label='Ideal')
         
         # Set title, labels, and legend for each subplot
-        title = order_datasets_tum[dataset].replace('\n', ' ')
+        title = order_datasets[dataset].replace('\n', ' ')
         axes[i].set_title(f'Dataset: {title}', fontsize=LABEL_FONT_SIZE+2, fontweight='bold')
         axes[i].set_xlabel('Reference Lesions Count')
         axes[i].set_ylabel('Predicted Lesions Count')
@@ -582,30 +591,58 @@ def main():
             'DiceSimilarityCoefficient': 'Dice Score',
             'RelativeVolumeError': 'Relative Volume Error',
         }
-        
-    # generate raincloud plots    
-    create_rainplot(df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
+    
+    if args.compare_across == 'tum':
 
-    if args.pred_type == 'lesion':
+        logger.info(f"Total files: {num_csvs}")
+        logger.info(f"Total Rows: {len(df_mega)}")
 
-        # generate regplot for additional metrics
-        create_regplot_lesion_count(df_mega, path_out)
-        
-        # compute statistical tests
-        compute_wilcoxon_test(df_mega, metrics_to_plot.keys())
+        # generate raincloud plots
+        create_rainplot(args, df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
 
+        # TODO: figure out how to update this for SC segmentation as well
+        if args.pred_type == 'lesion':
+            # compute statistical tests
+            # 1. Wilcoxon signed-rank test between 2D and 3D models within each dataset
+            compute_wilcoxon_test(df_mega, metrics_to_plot.keys())
+            # 2. Kruskal-Wallis H-test between best-performing models from each dataset
+            compute_kruskal_wallis_test_across_tum_datasets(df_mega, metrics_to_plot.keys())
+            # 3. Generate regplot for additional metrics
+            create_regplot_lesion_count(args, df_mega, path_out)
 
+    elif args.compare_across == 'tum-poly':
 
-    # if args.test_site == 'muc':
-    # # Add the deepseg_lesion metrics csv manually
-    #     deepseg_lesion_path = "/home/GRAMES.POLYMTL.CA/u114716/tum-poly/deepseg_lesion_metrics_mean.csv"
-    #     df_deepseg = pd.read_csv(deepseg_lesion_path)
-    #     df_deepseg['dataset'] = 'deepseg_lesion'
-    #     df_deepseg['model'] = '3D'
-    #     # convert the label to float
-    #     df_deepseg['label'] = 2.0
+        # Add the deepseg_lesion metrics csv manually
+        deepseg_lesion_path = f"{os.path.dirname(args.i[0])}/DeepSegLesionInference_tumNeuropoly"
+        if args.test_site == 'muc': 
+            deepseg_lesion_path = os.path.join(deepseg_lesion_path, "test_tum_deepseg-lesion_stacked/metrics_final_lesion.csv")
+        else:
+            deepseg_lesion_path = os.path.join(deepseg_lesion_path, f"test_{args.test_site}_deepseg-lesion/metrics_final_lesion.csv")
+        logger.info(f"Processing: {deepseg_lesion_path.replace(f'{os.path.dirname(args.i[0])}', '')}")
+        df_deepseg = pd.read_csv(deepseg_lesion_path)
+        df_deepseg['dataset'] = 'DeepSegLesionInference_tumNeuropoly'
+        df_deepseg['model'] = '3D'
+        df_deepseg['label'] = 1.0
+        df_deepseg['fold'] = 'fold_0'
 
-    #     df_mega = pd.concat([df_mega, df_deepseg])
+        df_mega = pd.concat([df_mega, df_deepseg])
+
+        # keep only the rows with fold_0, or else, TUM models have 126*3=378 rows and DeepSegLesion has only 126 rows
+        df_mega = df_mega[df_mega['fold'] == 'fold_0']
+
+        logger.info(f"Total files: {num_csvs}")
+        logger.info(f"Total Rows: {len(df_mega)}")
+
+        # # remove deepseg_lesion from the dataframe
+        # df_mega = df_mega[df_mega['dataset'] != 'DeepSegLesionInference_tumNeuropoly']
+
+        if args.pred_type == 'lesion':
+            # generate raincloud plots
+            create_rainplot(args, df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
+
+            # compute statistical tests
+            # 1. Kruskal-Wallis H-test between deepseg_lesion, 2D Chunks single-site and two-sites models
+            compute_kruskal_wallis_test_across_tum_poly(df_mega, metrics_to_plot.keys(), test_site=args.test_site)
 
 
     # save the mega dataframe
