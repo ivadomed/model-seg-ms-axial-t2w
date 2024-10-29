@@ -16,11 +16,6 @@ LABEL_FONT_SIZE = 14
 TICK_FONT_SIZE = 12
 PALETTE = ['red', 'darkblue']
 
-# order_datasets_tum = [
-#     # 'deepseg_lesion',
-#     # 'stitched_straight\nmulti-channel', 'chunks_straight\nmulti-channel', 'chunks_native\nmulti-channel', 'stitched_native\nmulti-channel',
-#     'stitched_straight\nregion-based', 'chunks_straight\nregion-based', 'chunks_native\nregion-based', 'stitched_native\nregion-based',
-# ]
 order_datasets_tum = {
      "Dataset901_tumMSChunksRegion": 'Chunks\nNative', 
      "Dataset902_tumMSStitchedRegion": 'Stitched\nNative', 
@@ -34,11 +29,6 @@ order_datasets_testing_large = {
     "Dataset901_tumMSChunksRegion": 'ChunksNative\nSingleSite',
     "Dataset910_tumMSChunksPolyNYUAxialRegion": 'ChunksNative\nTwoSites',
 }
-
-order_datasets_muc_vs_neuropoly = [
-    'stitched_straight\ntum', 'chunks_straight\ntum', 'chunks_native\ntum', 'stitched_native\ntum',
-    'chunks_native\ntum_neuropoly'
-]
 
 metrics_short = {
     'DiceSimilarityCoefficient': 'Dice',
