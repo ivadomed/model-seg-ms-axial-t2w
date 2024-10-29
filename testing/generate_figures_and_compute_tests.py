@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import ptitprince as pt
 from scipy.stats import wilcoxon, normaltest, kruskal
-from statsmodels.stats.multitest import multipletests
+import scikit_posthocs as sp
 
 LABEL_FONT_SIZE = 14
 TICK_FONT_SIZE = 12
@@ -366,56 +366,76 @@ def compute_kruskal_wallis_test_across_tum_datasets(df_concat, list_of_metrics):
     # Loop across metrics
     for metric in list_of_metrics:
         
-        # Reorder the dataframe
-        # 1. bavaria only models
+        # bavaria only models
         df_chunks_native_2d = df_concat[(df_concat['dataset'] == 'Dataset901_tumMSChunksRegion') & (df_concat['model'] == '2D')]
-        # df_stitch_native_3d = df_concat[(df_concat['dataset'] == 'Dataset902_tumMSStitchedRegion') & (df_concat['model'] == '3D')]
+        df_chunks_native_3d = df_concat[(df_concat['dataset'] == 'Dataset901_tumMSChunksRegion') & (df_concat['model'] == '3D')]
+        
         df_stitch_native_2d = df_concat[(df_concat['dataset'] == 'Dataset902_tumMSStitchedRegion') & (df_concat['model'] == '2D')]
+        df_stitch_native_3d = df_concat[(df_concat['dataset'] == 'Dataset902_tumMSStitchedRegion') & (df_concat['model'] == '3D')]
+        
         df_chunks_straight_2d = df_concat[(df_concat['dataset'] == 'Dataset903_tumMSChunksStraightRegion') & (df_concat['model'] == '2D')]
-        df_stitch_straight_2d = df_concat[(df_concat['dataset'] == 'Dataset904_tumMSStitchedStraightRegion') & (df_concat['model'] == '2D')]
+        df_chunks_straight_3d = df_concat[(df_concat['dataset'] == 'Dataset903_tumMSChunksStraightRegion') & (df_concat['model'] == '3D')]
 
-        # TODO 2. bavaria and polyNYU models (add?)
-        # df_chunks_twosites_2d = df_concat[(df_concat['dataset'] == 'Dataset910_tumMSChunksPolyNYUAxialRegion') & (df_concat['model'] == '2D')]
+        df_stitch_straight_2d = df_concat[(df_concat['dataset'] == 'Dataset904_tumMSStitchedStraightRegion') & (df_concat['model'] == '2D')]
+        df_stitch_straight_3d = df_concat[(df_concat['dataset'] == 'Dataset904_tumMSStitchedStraightRegion') & (df_concat['model'] == '3D')]
 
         # ensure that the two dataframes have the same number of rows
-        assert len(df_chunks_native_2d) == len(df_stitch_native_2d) == len(df_chunks_straight_2d) == len(df_stitch_straight_2d), \
-            f"Number of subjects differ across datasets, paired tests cannot be performed"
+        assert len(df_chunks_native_2d) == len(df_stitch_native_2d) == len(df_chunks_straight_2d) == len(df_stitch_straight_2d) == \
+        len(df_chunks_native_3d) == len(df_stitch_native_3d) == len(df_chunks_straight_3d) == len(df_stitch_straight_3d), \
+        f"Number of subjects differ across datasets, paired tests cannot be performed"
 
         # Combine all dataframes based on 'prediction', 'fold' columns, and the metric column
         df = pd.DataFrame({
             'prediction': df_chunks_native_2d['prediction'].values,  # Assuming 'prediction' is a common column in all dataframes
             'fold': df_chunks_native_2d['fold'].values,  # Assuming 'fold' is a common column in all dataframes
             f'{metric}_chunks_native_2d': df_chunks_native_2d[metric].values,
+            f'{metric}_chunks_native_3d': df_chunks_native_3d[metric].values,
             f'{metric}_stitch_native_2d': df_stitch_native_2d[metric].values,
+            f'{metric}_stitch_native_3d': df_stitch_native_3d[metric].values,
             f'{metric}_chunks_straight_2d': df_chunks_straight_2d[metric].values,
-            f'{metric}_stitch_straight_2d': df_stitch_straight_2d[metric].values
+            f'{metric}_chunks_straight_3d': df_chunks_straight_3d[metric].values,
+            f'{metric}_stitch_straight_2d': df_stitch_straight_2d[metric].values,
+            f'{metric}_stitch_straight_3d': df_stitch_straight_3d[metric].values,
         })
 
-        # # Drop rows with NaN values
-        # df = df.dropna()
         # Print number of subjects
         logger.info(f'{metrics_short[metric]}: Number of subjects: {len(df)}')
 
         # Compute Kruskal-Wallis H-test
-        stat, p = kruskal(df[metric + '_chunks_native_2d'], df[metric + '_stitch_native_2d'],
-                            df[metric + '_chunks_straight_2d'], df[metric + '_stitch_straight_2d'])
-        logger.info(f'{metrics_short[metric]}: Kruskal-Wallis H-test: formatted p{format_pvalue(p)}, '
-                    f'unformatted p={p:0.6f}')
-
-        # Run post-hoc tests between _chunks_native_2d (i.e. best model) and all other methods
+        stat, p = kruskal(
+            df[metric + '_chunks_native_2d'], df[metric + '_chunks_native_3d'],
+            df[metric + '_stitch_native_2d'], df[metric + '_stitch_native_3d'],
+            df[metric + '_chunks_straight_2d'], df[metric + '_chunks_straight_3d'],
+            df[metric + '_stitch_straight_2d'], df[metric + '_stitch_straight_3d'])
+        logger.info(f'{metrics_short[metric]}: Kruskal-Wallis H-test: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+        
         if p < 0.05:
-            p_val_dict = {}
-            for method in ['stitch_native_2d', 'chunks_straight_2d', 'stitch_straight_2d']:
-                stats, p = wilcoxon(df[metric + '_chunks_native_2d'], df[metric + '_' + method], alternative='greater')
-                p_val_dict[method] = p
-            # Do Bonferroni correction
-            # https://www.statsmodels.org/dev/generated/statsmodels.stats.multitest.multipletests.html
-            _, pvals_corrected, _, _ = multipletests(list(p_val_dict.values()), alpha=0.05, method='bonferroni')
-            p_val_dict_corrected = dict(zip(list(p_val_dict.keys()), pvals_corrected))
-            # Format p-values using format_pvalue function
-            p_val_dict_corrected = {k: format_pvalue(v) for k, v in p_val_dict_corrected.items()}
-            logger.info(f'{metrics_short[metric]}: Post-hoc tests between chunks_native_2d and all other methods:\n'
-                        f'{p_val_dict_corrected}')
+            # Perform Dunn's test as post-hoc analysis (https://www.geeksforgeeks.org/how-to-perform-dunns-test-in-python/)
+            # Dunn’s Test is used after the Kruskal-Wallis one-way ANOVA by ranks to identify which groups differ from each other. 
+            # It determines whether the difference between the medians of various groups is statistically significant. 
+            # Dunn’s Test adjusts for multiple comparisons, making it suitable for analyzing data with several groups.
+            # NOTE: This is a "much" easier way to handle pairwise comparisons with multiple groups rather than doing 
+            # multiple pair-wise Wilcoxon tests between methods and correcting for multiple comparisons.
+
+            # reframe the df to have all methods in a column and the metric values in another column
+            df_temp = pd.melt(df, id_vars=['prediction', 'fold'], value_vars=[metric + '_chunks_native_2d', metric + '_chunks_native_3d',
+                metric + '_stitch_native_2d', metric + '_stitch_native_3d', metric + '_chunks_straight_2d', metric + '_chunks_straight_3d',
+                metric + '_stitch_straight_2d', metric + '_stitch_straight_3d'],
+                var_name='model', value_name='metric')
+
+            p_post_hoc = sp.posthoc_dunn(df_temp, p_adjust='holm', group_col='model', val_col='metric')
+
+            # check if p_post_hoc is symmetric
+            np.testing.assert_array_equal(p_post_hoc.values, p_post_hoc.values.T), "p_post_hoc matrix is not symmetric"
+
+            logger.info(f"{metrics_short[metric]}: Post-hoc Dunn's test: Site")
+            for i in range(p_post_hoc.shape[0]):
+                for j in range(p_post_hoc.shape[1]):
+                    if i < j:
+                        model_a = p_post_hoc.index[i].replace(metric, '')
+                        model_b = p_post_hoc.columns[j].replace(metric, '')
+                        p_formatted = format_pvalue(p_post_hoc.iloc[i, j])
+                        logger.info(f"\t{model_a} vs {model_b}: formatted p{p_formatted}, unformatted p={p_post_hoc.iloc[i, j]:0.6f}")
         
         logger.info('')
 
@@ -441,18 +461,27 @@ def compute_kruskal_wallis_test_across_tum_poly(df_concat, list_of_metrics, test
         
         # create individual dataframes for each model
         df_chunks_single_site_2d = df_concat[(df_concat['dataset'] == 'Dataset901_tumMSChunksRegion') & (df_concat['model'] == '2D')]
+        df_chunks_single_site_3d = df_concat[(df_concat['dataset'] == 'Dataset901_tumMSChunksRegion') & (df_concat['model'] == '3D')]
         df_chunks_two_sites_2d = df_concat[(df_concat['dataset'] == 'Dataset910_tumMSChunksPolyNYUAxialRegion') & (df_concat['model'] == '2D')]
+        df_chunks_two_sites_3d = df_concat[(df_concat['dataset'] == 'Dataset910_tumMSChunksPolyNYUAxialRegion') & (df_concat['model'] == '3D')]
         df_deepseg_lesion = df_concat[(df_concat['dataset'] == 'DeepSegLesionInference_tumNeuropoly') & (df_concat['model'] == '3D')]
 
         # ensure that the two dataframes have the same number of rows
-        assert len(df_chunks_single_site_2d) == len(df_chunks_two_sites_2d) == len(df_deepseg_lesion), \
+        assert \
+        len(df_chunks_single_site_2d) == len(df_chunks_two_sites_2d) == len(df_deepseg_lesion) == len(df_chunks_single_site_3d) == len(df_chunks_two_sites_3d), \
             f"Number of subjects differ across datasets, paired tests cannot be performed"
 
         # run normality test
         stat, p = normaltest(df_chunks_single_site_2d[metric])
         logger.info(f'{metrics_short[metric]}: Normality test for nnUNet2D single-site: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+        stat, p = normaltest(df_chunks_single_site_3d[metric])
+        logger.info(f'{metrics_short[metric]}: Normality test for nnUNet3D single-site: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+
         stat, p = normaltest(df_chunks_two_sites_2d[metric])
         logger.info(f'{metrics_short[metric]}: Normality test for nnUNet2D two-sites: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+        stat, p = normaltest(df_chunks_two_sites_3d[metric])
+        logger.info(f'{metrics_short[metric]}: Normality test for nnUNet3D two-sites: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
+
         stat, p = normaltest(df_deepseg_lesion[metric])
         logger.info(f'{metrics_short[metric]}: Normality test for DeepSegLesionInference: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
 
@@ -461,34 +490,47 @@ def compute_kruskal_wallis_test_across_tum_poly(df_concat, list_of_metrics, test
             'prediction': df_chunks_single_site_2d['prediction'].values,  # Assuming 'prediction' is a common column in all dataframes
             'fold': df_chunks_single_site_2d['fold'].values,  # Assuming 'fold' is a common column in all dataframes
             f'{metric}_chunks_single_site_2d': df_chunks_single_site_2d[metric].values,
+            f'{metric}_chunks_single_site_3d': df_chunks_single_site_3d[metric].values,
             f'{metric}_chunks_two_sites_2d': df_chunks_two_sites_2d[metric].values,
+            f'{metric}_chunks_two_sites_3d': df_chunks_two_sites_3d[metric].values,
             f'{metric}_deepseg_lesion': df_deepseg_lesion[metric].values
         })
 
         # Print number of subjects
         logger.info(f'{metrics_short[metric]}; Number of subjects: {len(df)}; Test site: {test_site.upper()}')
 
-        # Compute Kruskal-Wallis H-test
-        stat, p = kruskal(df[metric + '_chunks_single_site_2d'], df[metric + '_chunks_two_sites_2d'], df[metric + '_deepseg_lesion'])
+        # Compute Kruskal-Wallis H-test between 5 groups
+        stat, p = kruskal(df[metric + '_deepseg_lesion'],
+            df[metric + '_chunks_single_site_2d'], df[metric + '_chunks_single_site_3d'],
+            df[metric + '_chunks_two_sites_2d'], df[metric + '_chunks_two_sites_3d'])
         logger.info(f'{metrics_short[metric]}: Kruskal-Wallis H-test: formatted p{format_pvalue(p)}, unformatted p={p:0.6f}')
 
-        # Run post-hoc tests between _chunks_native_2d (i.e. best model) and all other methods
         if p < 0.05:
-            p_val_dict = {}
-            for method in ['chunks_single_site_2d', 'deepseg_lesion']:
-                # NOTE: here, we are computing pair-wise tests between: 
-                # (i) two-sites and single-site model, and (ii) two-sites and deepseg_lesion model
-                # to conclude whether the two-sites model is significantly better than the other two
-                stats, p = wilcoxon(df[metric + '_chunks_two_sites_2d'], df[metric + '_' + method], alternative='greater')
-                p_val_dict[method] = p
-            # Do Bonferroni correction
-            # https://www.statsmodels.org/dev/generated/statsmodels.stats.multitest.multipletests.html
-            _, pvals_corrected, _, _ = multipletests(list(p_val_dict.values()), alpha=0.05, method='bonferroni')
-            p_val_dict_corrected = dict(zip(list(p_val_dict.keys()), pvals_corrected))
-            # Format p-values using format_pvalue function
-            p_val_dict_corrected = {k: format_pvalue(v) for k, v in p_val_dict_corrected.items()}
-            logger.info(f'{metrics_short[metric]}: Post-hoc tests between _chunks_two_sites_2d and all other methods for site {test_site.upper()}:\n'
-                        f'{p_val_dict_corrected}')
+            # Perform Dunn's test as post-hoc analysis (https://www.geeksforgeeks.org/how-to-perform-dunns-test-in-python/)            
+            
+            # reframe the df to have all methods in a column and the metric values in another column
+            df_temp = pd.melt(df, id_vars=['prediction', 'fold'], value_vars=[metric + '_deepseg_lesion',
+                metric + '_chunks_single_site_2d', metric + '_chunks_single_site_3d',
+                metric + '_chunks_two_sites_2d', metric + '_chunks_two_sites_3d'],
+                var_name='model', value_name='metric')
+
+            # val_col here is the "dependent" variable i.e. the metric scores and the group_col is the "independent" variable i.e. the 
+            # model which is used to get the metric scores
+            p_post_hoc = sp.posthoc_dunn(df_temp, p_adjust='holm', group_col='model', val_col='metric')
+
+            # check if p_post_hoc is symmetric
+            np.testing.assert_array_equal(p_post_hoc.values, p_post_hoc.values.T), "p_post_hoc matrix is not symmetric"
+            
+            # p_post_hoc is a len(model) x len(model) matrix with p-values for each pair of models and it is symmetric
+            # so we only need to print the upper triangle of the matrix
+            logger.info(f"{metrics_short[metric]}: Post-hoc Dunn's test: Site: {test_site.upper()}")
+            for i in range(p_post_hoc.shape[0]):
+                for j in range(p_post_hoc.shape[1]):
+                    if i < j:
+                        model_a = p_post_hoc.index[i].replace(metric, '')
+                        model_b = p_post_hoc.columns[j].replace(metric, '')
+                        p_formatted = format_pvalue(p_post_hoc.iloc[i, j])
+                        logger.info(f"\t{model_a} vs {model_b}: formatted p{p_formatted}, unformatted p={p_post_hoc.iloc[i, j]:0.6f}")
         
         logger.info('')
 
