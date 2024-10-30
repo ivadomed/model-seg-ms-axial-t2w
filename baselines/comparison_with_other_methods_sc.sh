@@ -1,33 +1,7 @@
 #!/bin/bash
 #
 # Compare our nnUNet model with other methods (sct_propseg, sct_deepseg_sc 2d, sct_deepseg_sc 3d,
-# MONAI contrast-agnostic (part of SCT v6.2)) on sci-zurich and sci-colorado datasets
-#
-# Note: subjects from both datasets have to be located in the same BIDS-like folder, example:
-# ├── derivatives
-# │	 └── labels
-# │	     ├── sub-5416   # sci-colorado subject
-# │	     │	 └── anat
-# │	     │	     ├── sub-5416_T2w_lesion-manual.json
-# │	     │	     ├── sub-5416_T2w_lesion-manual.nii.gz
-# │	     │	     ├── sub-5416_T2w_seg-manual.json
-# │	     │	     └── sub-5416_T2w_seg-manual.nii.gz
-# │	     └── sub-zh01   # sci-zurich subject
-# │	         └── ses-01
-# │	             └── anat
-# │	                 ├── sub-zh01_ses-01_acq-sag_T2w_lesion-manual.json
-# │	                 ├── sub-zh01_ses-01_acq-sag_T2w_lesion-manual.nii.gz
-# │	                 ├── sub-zh01_ses-01_acq-sag_T2w_seg-manual.json
-# │	                 └── sub-zh01_ses-01_acq-sag_T2w_seg-manual.nii.gz
-# ├── sub-5416    # sci-colorado subject
-# │	 └── anat
-# │	     ├── sub-5416_T2w.json
-# │	     └── sub-5416_T2w.nii.gz
-# └── sub-zh01    # sci-zurich subject
-#    └── ses-01
-#        └── anat
-#            ├── sub-zh01_ses-01_acq-sag_T2w.json
-#            └── sub-zh01_ses-01_acq-sag_T2w.nii.gz
+# MONAI contrast-agnostic (part of SCT v6.2)) on bavaria-quebec-spine-ms-unstitched dataset.
 #
 # Note: conda environment with nnUNetV2 is required to run this script.
 # For details how to install nnUNetV2, see:
@@ -107,8 +81,6 @@ segment_sc() {
       execution_time=$(python3 -c "print($end_time - $start_time)")
       echo "${FILESEG},${execution_time}" >> ${PATH_RESULTS}/execution_time.csv
 
-      # Compute ANIMA segmentation performance metrics
-      compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
   elif [[ $method == 'propseg' ]]; then
       FILESEG="${file}_seg_${method}"
 
@@ -124,8 +96,6 @@ segment_sc() {
 
       # Remove centerline (we don't need it)
       rm ${file}_centerline.nii.gz
-      # Compute ANIMA segmentation performance metrics
-      compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
   fi
 }
 
@@ -148,8 +118,6 @@ segment_sc_nnUNet(){
 
   # Generate QC report
   sct_qc -i ${file}.nii.gz -s ${FILESEG}.nii.gz -p sct_deepseg_sc -qc ${PATH_QC} -qc-subject ${SUBJECT}
-  # Compute ANIMA segmentation performance metrics
-  compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
 }
 
 # Segment spinal cord using the MONAI contrast-agnostic model (part of SCT v6.2)
@@ -170,27 +138,6 @@ segment_sc_MONAI(){
 
   # Generate QC report
   sct_qc -i ${file}.nii.gz -s ${FILESEG}.nii.gz -p sct_deepseg_sc -qc ${PATH_QC} -qc-subject ${SUBJECT}
-  # Compute ANIMA segmentation performance metrics
-  compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
-}
-
-# Compute ANIMA segmentation performance metrics
-compute_anima_metrics(){
-  # We have to copy qform matrix from seg-manual to the automatically generated segmentation to avoid ITK error:
-  # "Description: ITK ERROR: SegmentationMeasuresImageFilter(): Inputs do not occupy the same physical space!"
-  # Related to the following issue : https://github.com/spinalcordtoolbox/spinalcordtoolbox/pull/4135
-  sct_image -i ${file}_seg-manual.nii.gz -copy-header ${FILESEG}.nii.gz -o ${FILESEG}_updated_header.nii.gz
-
-  # Compute ANIMA segmentation performance metrics
-  # -i : input segmentation
-  # -r : GT segmentation
-  # -o : output file
-  # -d : surface distances evaluation
-  # -s : compute metrics to evaluate a segmentation
-  # -X : stores results into a xml file.
-  ${anima_binaries_path}/animaSegPerfAnalyzer -i ${FILESEG}_updated_header.nii.gz -r ${file}_seg-manual.nii.gz -o ${PATH_RESULTS}/${FILESEG} -d -s -X
-
-  rm ${FILESEG}_updated_header.nii.gz
 }
 
 # Copy GT spinal cord segmentation (located under derivatives/labels)
