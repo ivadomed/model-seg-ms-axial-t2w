@@ -16,19 +16,21 @@ Author: Jan Valosek
 """
 
 import os
-import glob
+import re
 import json
 import argparse
 
-import numpy as np
 import pandas as pd
 import nibabel as nib
+from loguru import logger
 
 LIST_OF_PARAMETERS = [
     'MagneticFieldStrength',
     'Manufacturer',
     'ManufacturerModelName',
-    'ProtocolName'
+    'ProtocolName',
+    'EchoTime',
+    'RepetitionTime',
     ]
 
 
@@ -45,13 +47,7 @@ def get_parser():
         '-i',
         required=True,
         type=str,
-        help='Path to BIDS dataset. For example: sci-zurich or sci-colorado'
-    )
-    parser.add_argument(
-        '-contrast',
-        required=True,
-        type=str,
-        help='Image contrast. Examples: T2w (sci-colorado, sci-paris), acq-sag_T2w or acq-ax_T2w (sci-zurich)',
+        help='Path to dataset json file (dataset_T2w_ax_neuropoly_tum.json) containing the image/label keys.',
     )
 
     return parser
@@ -118,63 +114,90 @@ def parse_nii_file(file_path):
     return parsed_info
 
 
+def find_site_in_path(path):
+    match = re.search(r'sub-m|sub-nyu|sub-bwh|sub-ucsf', path)
+    if match:
+        return 'TUM' if 'sub-m' in match.group() else 'NYU' if 'sub-nyu' in match.group() else 'BWH' if 'sub-bwh' in match.group() else 'UCSF'
+    else:
+        return 'Unknown'
+
+
 def main():
     # Parse the command line arguments
     parser = get_parser()
     args = parser.parse_args()
+    path_out = "/home/GRAMES.POLYMTL.CA/u114716/tum-poly/sequence_parameters"
+    if not os.path.exists(path_out):
+        os.makedirs(path_out, exist_ok=True)
+    logger.add(os.path.join(path_out, f"sequence_params.log"), rotation="10 MB", level="INFO")
+    
+    path_json = args.i
 
-    dir_path = os.path.abspath(args.i)
+    list_of_files_per_site = {}    
+    with open(path_json, "r") as f:
+        file = json.load(f)
+        for split in ["train", "validation", "test"]:
+            for case in file[split]:
+                site = find_site_in_path(case['image'])
+                if site not in list_of_files_per_site:
+                    list_of_files_per_site[site] = []
+                list_of_files_per_site[site].append(case['image'])
 
-    if not os.path.isdir(dir_path):
-        print(f'ERROR: {args.i} does not exist.')
+    for site, list_of_files in list_of_files_per_site.items():
 
-    contrast = args.contrast
+        logger.info(f"Site: {site}")
+        # Loop across JSON sidecar files in the input path
+        parsed_data = []
+        for file in list_of_files:
+            if file.endswith('.nii.gz'):
+                # print(f'Parsing {file}')
+                parsed_json = parse_json_file(file)
+                parsed_header = parse_nii_file(file)
+                # Note: **metrics is used to unpack the key-value pairs from the metrics dictionary
+                parsed_data.append({'filename': file, **parsed_json, **parsed_header})
 
-    # Initialize an empty list to store the parsed data
-    parsed_data = []
+        # Create a pandas DataFrame from the parsed data
+        df = pd.DataFrame(parsed_data)
 
-    list_of_files = glob.glob(os.path.join(dir_path, '**', '*' + contrast + '.nii.gz'), recursive=True)
-    # Keep only ses-01 for sci-zurich
-    if 'zurich' in dir_path:
-        list_of_files = [file for file in list_of_files if 'ses-01' in file]
+        # Save the DataFrame to a CSV file
+        df.to_csv(os.path.join(path_out, f'{site}_parsed_data.csv'), index=False)
+        logger.info(f"Parsed data saved to {os.path.join(path_out, f'{site}_parsed_data.csv')}")
 
-    # Loop across JSON sidecar files in the input path
-    for file in list_of_files:
-        if file.endswith('.nii.gz'):
-            print(f'Parsing {file}')
-            file_path = os.path.join(dir_path, file)
-            parsed_json = parse_json_file(file_path)
-            parsed_header = parse_nii_file(file_path)
-            # Note: **metrics is used to unpack the key-value pairs from the metrics dictionary
-            parsed_data.append({'filename': file, **parsed_json, **parsed_header})
+        if site == "TUM":
+            # Print the min and max values of the MagneticFieldStrength, PixDim, and SliceThickness
+            logger.info(df[['MagneticFieldStrength', 'PixDim', 'SliceThickness']].agg(['min', 'max']))
+            logger.info(df[['PixDim', 'SliceThickness']].agg(['median']))
 
-    # Create a pandas DataFrame from the parsed data
-    df = pd.DataFrame(parsed_data)
+            # # Print unique values of the Manufacturer and ManufacturerModelName
+            # print(df[['Manufacturer', 'ManufacturerModelName']].drop_duplicates())
+            # Print number of filenames for unique values of the Manufacturer
+            logger.info(df.groupby('Manufacturer')['filename'].nunique())
+            # Print number of filenames for unique values of the MagneticFieldStrength
+            logger.info(df.groupby('MagneticFieldStrength')['filename'].nunique())
+            # print the EchoTime and RepetitionTime
+            logger.info(df[['EchoTime', 'RepetitionTime']].agg(['median']))
+            # # groupby echo time and repetition time
+            # logger.info(df.groupby(['EchoTime', 'RepetitionTime'])['filename'].nunique())
 
-    # Save the DataFrame to a CSV file
-    df.to_csv(os.path.join(dir_path, 'parsed_data.csv'), index=False)
-    print(f'Parsed data saved to {os.path.join(dir_path, "parsed_data.csv")}')
+        else:
+            # NOTE: for the 3 sites from sct-testing-large, MagneticFieldStrength is missing, instead the 
+            # strength is mentioned with the manufacturer name
+            # Print the min and max values of the MagneticFieldStrength, PixDim, and SliceThickness
+            logger.info(df[['PixDim', 'SliceThickness']].agg(['min', 'max']))
+            # compute the median of the PixDim and SliceThickness
+            
 
-    # For sci-paris, we do not have JSON sidecars --> we can fetch only PixDim and SliceThickness from nii header
-    if 'sci-paris' in dir_path:
-        # Print the min and max values of the PixDim, and SliceThickness
-        print(df[['PixDim', 'SliceThickness']].agg([np.min, np.max]))
-    else:
-        # Remove rows with n/a values for MagneticFieldStrength
-        df = df[df['MagneticFieldStrength'] != 'n/a']
-
-        # Convert MagneticFieldStrength to float
-        df['MagneticFieldStrength'] = df['MagneticFieldStrength'].astype(float)
-
-        # Print the min and max values of the MagneticFieldStrength, PixDim, and SliceThickness
-        print(df[['MagneticFieldStrength', 'PixDim', 'SliceThickness']].agg([np.min, np.max]))
-
-        # Print unique values of the Manufacturer and ManufacturerModelName
-        print(df[['Manufacturer', 'ManufacturerModelName']].drop_duplicates())
-        # Print number of filenames for unique values of the Manufacturer
-        print(df.groupby('Manufacturer')['filename'].nunique())
-        # Print number of filenames for unique values of the MagneticFieldStrength
-        print(df.groupby('MagneticFieldStrength')['filename'].nunique())
+            # # Print unique values of the Manufacturer and ManufacturerModelName
+            # print(df[['Manufacturer', 'ManufacturerModelName']].drop_duplicates())
+            # Print number of filenames for unique values of the Manufacturer
+            logger.info(df.groupby('Manufacturer')['filename'].nunique())
+            # # Print number of filenames for unique values of the MagneticFieldStrength
+            # logger.info(df.groupby('MagneticFieldStrength')['filename'].nunique())
+            # drop rows were echo time or repetition time is missing
+            df = df[df['EchoTime'] != 'n/a']
+            # print the EchoTime and RepetitionTime
+            logger.info(df[['EchoTime', 'RepetitionTime']].agg(['min', 'max']))
+        
 
 
 if __name__ == '__main__':
