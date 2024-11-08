@@ -146,8 +146,8 @@ def main():
             refs_stack = [np.pad(ref, ((0, max_shape[0] - ref.shape[0]), (0, max_shape[1] - ref.shape[1]), (0, max_shape[2] - ref.shape[2]))) for ref in refs_stack]
 
             # stack the images
-            preds_stacked = np.stack(preds_stack, axis=2).astype(np.uint8)
-            refs_stacked = np.stack(refs_stack, axis=2).astype(np.uint8)
+            preds_stacked = np.concatenate(preds_stack, axis=2).astype(np.uint8)
+            refs_stacked = np.concatenate(refs_stack, axis=2).astype(np.uint8)
 
             # create a new file name for reference and prediction
             pred_fname = os.path.join(path_out_pred, f'{dataset_name}_{sub_ses}_preds_stack.nii.gz')
