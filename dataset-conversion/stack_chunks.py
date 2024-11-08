@@ -19,6 +19,19 @@ def load_nifti_image(file_path):
     nifti_image = nib.load(file_path)
     return nifti_image.get_fdata()
 
+def load_nifti_image_affine(file_path):
+    """
+    Construct absolute path to the nifti image, check if it exists, and load the image data.
+    :param file_path: path to the nifti image
+    :return: nifti image affine
+    """
+    file_path = os.path.expanduser(file_path)   # resolve '~' in the path
+    file_path = os.path.abspath(file_path)
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f'File {file_path} does not exist.')
+    nifti_image = nib.load(file_path)
+    return nifti_image.affine
+
 
 def find_subject_session_chunk_in_path(path):
     """
@@ -26,7 +39,6 @@ def find_subject_session_chunk_in_path(path):
     :param path: Input path containing subject and session identifiers.
     :return: Extracted subject and session identifiers or None if not found.
     """
-    # pattern = r'.*_(sub-m\d{6})_(ses-\d{8}).*_(chunk-\d{1})_.*'
     pattern = r'.*_(sub-m\d{6}_ses-\d{8}).*_(chunk-\d{1})_.*'
     match = re.search(pattern, path)
     if match:
@@ -87,6 +99,7 @@ def main():
         reference_files = sorted(reference_files)
 
         path_out_pred = os.path.join(os.path.dirname(args.prediction), f'{os.path.basename(args.prediction)}_stacked')
+        print(path_out_pred)
         if not os.path.exists(path_out_pred):
             os.makedirs(path_out_pred, exist_ok=True)
         path_out_ref = os.path.join(os.path.dirname(args.reference), f'{os.path.basename(args.reference)}_stacked')
@@ -103,11 +116,12 @@ def main():
             preds_per_sub_ses = [f for f in prediction_files if sub_ses in f]
             refs_per_sub_ses = [f for f in reference_files if sub_ses in f]
 
-            preds_stack, refs_stack = [], []
+            preds_stack, refs_stack, affines_stack = [], [], []
             for pred, ref in zip(preds_per_sub_ses, refs_per_sub_ses):
                 # load nifti images
                 prediction_data = load_nifti_image(pred)
                 reference_data = load_nifti_image(ref)
+                affines_data = load_nifti_image_affine(ref)
 
                 # check whether the images have the same shape and orientation
                 if prediction_data.shape != reference_data.shape:
@@ -117,6 +131,7 @@ def main():
 
                 preds_stack.append(prediction_data)
                 refs_stack.append(reference_data)
+                affines_stack.append(affines_data)
 
             # min_shape = np.min([pred.shape for pred in preds_stack], axis=0)
             max_shape = np.max([pred.shape for pred in preds_stack], axis=0)
@@ -131,16 +146,24 @@ def main():
             refs_stack = [np.pad(ref, ((0, max_shape[0] - ref.shape[0]), (0, max_shape[1] - ref.shape[1]), (0, max_shape[2] - ref.shape[2]))) for ref in refs_stack]
 
             # stack the images
-            preds_stacked = np.stack(preds_stack, axis=-1).astype(np.uint8)
-            refs_stacked = np.stack(refs_stack, axis=-1).astype(np.uint8)
+            preds_stacked = np.stack(preds_stack, axis=2).astype(np.uint8)
+            refs_stacked = np.stack(refs_stack, axis=2).astype(np.uint8)
 
             # create a new file name for reference and prediction
             pred_fname = os.path.join(path_out_pred, f'{dataset_name}_{sub_ses}_preds_stack.nii.gz')
             ref_fname = os.path.join(path_out_ref, f'{dataset_name}_{sub_ses}_refs_stack.nii.gz')
 
-            # save the stacked images as uint8
-            nib.save(nib.Nifti1Image(preds_stacked, np.eye(4)), pred_fname)
-            nib.save(nib.Nifti1Image(refs_stacked, np.eye(4)), ref_fname)
+            # To save the stacked images as uint8, we use the affine matrix of the first chunk. 
+            # Although, in most cases, the chunks within a session will have identical resolution, 
+            # there are instances where this may not hold true. 
+            # Addressing this by resampling all cases to a uniform resolution
+            # would introduce artifacts into the comparison, 
+            # so we believe it is preferable to maintain the current approach,
+            # where we assume identical resolution using the affine 
+            # of the first chunk for the subsequently stacked image.
+
+            nib.save(nib.Nifti1Image(preds_stacked, affines_stack[0]), pred_fname)
+            nib.save(nib.Nifti1Image(refs_stacked, affines_stack[0]), ref_fname)
 
 
 if __name__ == '__main__':
