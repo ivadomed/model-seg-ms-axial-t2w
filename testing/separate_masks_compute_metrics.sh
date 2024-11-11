@@ -17,11 +17,12 @@ else
     metrics_to_compute="dsc nsd rel_vol_error"
 fi
 
-dataset_name="Dataset910_tumMSChunksPolyNYUAxialRegion"
+dataset_name="Dataset901_tumMSChunksRegion"
 
 # if dataset_name is Dataset901_tumMSChunksRegion, then the site is "muc_stacked"
 if [ ${dataset_name} == "Dataset901_tumMSChunksRegion" ]; then
     site="muc_stacked"
+    # site="muc"
 elif [ ${dataset_name} == "Dataset902_tumMSStitchedRegion" ]; then
     site="muc"
 elif [ ${dataset_name} == "Dataset903_tumMSChunksStraightRegion" ]; then
@@ -36,14 +37,14 @@ else
     exit 1
 fi
 
-folds=(0 1 2)
 models=("2d" "3d_fullres")
+chunk="chunk-3"
 
 
 # Separating GT masks into cord and lesion masks
 
 path_gt=${nnUNet_raw}/${dataset_name}/labelsTs_${site}
-path_out=${nnUNet_raw}/${dataset_name}/labelsTs_${site}_${label_type}
+path_out=${nnUNet_raw}/${dataset_name}/labelsTs_${site}_${label_type}_${chunk}
 
 if [ ! -d ${path_out} ]; then
     mkdir -p ${path_out}
@@ -53,7 +54,7 @@ echo "==========================================================================
 echo "Separating GROUND-TRUTH masks into spinal cord and lesion masks"
 echo "====================================================================================================="
 
-for file in ${path_gt}/*.nii.gz; do
+for file in ${path_gt}/*_${chunk}_T2w*.nii.gz; do
 
     file_out=${path_out}/$(basename ${file})
     file_out=${file_out/.nii.gz/_${label_type}.nii.gz}
@@ -67,6 +68,7 @@ done
 # Separating region-based predictions into separate masks
 # ======================================================================================================================
 
+folds=(0) # 1 2)
 for model in ${models[@]}; do
 
     for fold in ${folds[@]}; do
@@ -76,14 +78,14 @@ for model in ${models[@]}; do
         # echo "-----------------------------------------------------------------------------------------------------"
 
         path_predictions=${nnUNet_results}/${dataset_name}/nnUNetTrainerDiceCELoss_noSmooth__nnUNetPlans__${model}/fold_${fold}/test_${site}
-        path_out_separated=${path_predictions}_${label_type}
+        path_out_separated=${path_predictions}_${label_type}_${chunk}
 
         # if the output directory does not exist, create it
         if [ ! -d ${path_out_separated} ]; then
             mkdir -p ${path_out_separated}
         fi
 
-        for file in ${path_predictions}/*.nii.gz; do
+        for file in ${path_predictions}/*_${chunk}_T2w*.nii.gz; do
 
             file_out=${path_out_separated}/$(basename ${file})
             file_out=${file_out/.nii.gz/_${label_type}.nii.gz}
@@ -97,9 +99,9 @@ for model in ${models[@]}; do
         echo "====================================================================================================="
         
         python ~/tum-poly/MetricsReloaded/compute_metrics_reloaded.py \
-            -reference ${nnUNet_raw}/${dataset_name}/labelsTs_${site}_${label_type} \
+            -reference ${nnUNet_raw}/${dataset_name}/labelsTs_${site}_${label_type}_${chunk} \
             -prediction ${path_out_separated} \
-            -output ${path_out_separated}/metrics_final_${label_type}.csv \
+            -output ${path_out_separated}/metrics_final_${label_type}_${chunk}.csv \
             -metrics ${metrics_to_compute} \
             -jobs 8
     done
