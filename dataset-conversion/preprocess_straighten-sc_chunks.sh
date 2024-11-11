@@ -139,12 +139,13 @@ for file in $(find "$PWD" -type f -name "*acq-ax*" ! -name "*seg*" ! -name "*les
 
       # Process with incrementing warp file names
       sct_straighten_spinalcord -i ${file} -s ${base_name}_seg-manual.nii.gz -o ${base_name}_desc-straightened.nii.gz
-      mv warp_curve2straight.nii.gz warp_curve2straight_chunk-${counter}.nii.gz
-      mv warp_straight2curve.nii.gz warp_straight2curve_chunk-${counter}.nii.gz
-      mv straight_ref.nii.gz straight_ref_chunk-${counter}.nii.gz
+
       # NOTE: NN interpolation is changing the GT by adding new voxels (originally not in GT). Linear interpolation does that too but it is less subtle than with NN interpolation
-      sct_apply_transfo -i ${base_name}_seg-manual.nii.gz -d ${base_name}_desc-straightened.nii.gz -w warp_curve2straight_chunk-${counter}.nii.gz -x linear -o ${base_name}_seg-manual_desc-straightened.nii.gz
-      sct_apply_transfo -i ${base_name}_lesion-manual.nii.gz -d ${base_name}_desc-straightened.nii.gz -w warp_curve2straight_chunk-${counter}.nii.gz -x linear -o ${base_name}_lesion-manual_desc-straightened.nii.gz
+      sct_apply_transfo -i ${base_name}_seg-manual.nii.gz -d ${base_name}_desc-straightened.nii.gz -w warp_curve2straight.nii.gz -x linear -o ${base_name}_seg-manual_desc-straightened.nii.gz
+      sct_apply_transfo -i ${base_name}_lesion-manual.nii.gz -d ${base_name}_desc-straightened.nii.gz -w warp_curve2straight.nii.gz -x linear -o ${base_name}_lesion-manual_desc-straightened.nii.gz
+      mv warp_curve2straight.nii.gz ${base_name}_warp_curve2straight.nii.gz
+      mv warp_straight2curve.nii.gz ${base_name}_warp_straight2curve.nii.gz
+      mv straight_ref.nii.gz ${base_name}_straight_ref.nii.gz
 
       # Threshold and other post-processing as needed
       sct_maths -i ${base_name}_seg-manual_desc-straightened.nii.gz -bin 0.5 -o ${base_name}_seg-manual_desc-straightened.nii.gz
@@ -173,8 +174,17 @@ rsync -avzh $PATH_DATA_PROCESSED/dataset_description.json $PATH_DATA_PROCESSED_C
 rsync -avzh $PATH_DATA_PROCESSED/participants.* $PATH_DATA_PROCESSED_CLEAN/
 rsync -avzh $PATH_DATA_PROCESSED/README $PATH_DATA_PROCESSED_CLEAN/
 
-# Images
+# Straightened Images
 for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*T2w_desc-straightened.nii.gz") 
+do
+# Image
+  mkdir -p $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/
+  file_clean="${file/$PATH_DATA_PROCESSED/$PATH_DATA_PROCESSED_CLEAN}"
+  rsync -avzh $file $file_clean
+done
+
+# Unprocessed Images
+for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*T2w.nii.gz") 
 do
 # Image
   mkdir -p $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/
@@ -190,6 +200,26 @@ do
   file_clean="${file/$PATH_DATA_PROCESSED/$PATH_DATA_PROCESSED_CLEAN/derivatives/labels}"
   rsync -avzh $file $file_clean
 done
+
+# Native Labels (ie not straightened)
+for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*chunk*manual*" ! -name "*desc-straight*")
+do
+# Labels
+  mkdir -p $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/
+  file_clean="${file/$PATH_DATA_PROCESSED/$PATH_DATA_PROCESSED_CLEAN/derivatives/labels}"
+  rsync -avzh $file $file_clean
+done
+
+# Warping Fields
+for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*warp_*")
+do
+# Warping fields
+  mkdir -p $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/
+  file_clean="${file/$PATH_DATA_PROCESSED/$PATH_DATA_PROCESSED_CLEAN/derivatives/labels}"
+  rsync -avzh $file $file_clean
+done
+
+
 
 # # Warp
 # for file in $(find $PATH_DATA_PROCESSED/${SUBJECT}/anat/ -name "*warp*")

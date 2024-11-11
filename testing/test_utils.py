@@ -21,18 +21,23 @@ def fetch_filename_details(filename_path):
     subject = re.search('sub-(.*?)[_/]', filename_path)
     subjectID = subject.group(0)[:-1] if subject else ""    # [:-1] removes the last underscore or slash
     
-    session = re.findall(r'ses-..', filename_path)
-    sessionID = session[0] if session else ""               # Return None if there is no session
+    session = re.search('ses-(.*?)[_/]', filename_path)
+    sessionID = session.group(0)[:-1] if subject else ""               # Return None if there is no session
+    # sessionID = session.group(0) if subject else ""               # Return None if there is no session
 
     fID = re.search('_\d{3}', fileName)
     fileID = fID.group(0)[1:] if fID else ""        # [1:-1] removes the underscores
+
+    # sub_ses_name = fileName.replace(datasetName, '').replace(fileID, '')
+    sub_ses_name = f"{subjectID}_{sessionID}"
 
     # REGEX explanation
     # \d - digit
     # \d? - no or one occurrence of digit
     # *? - match the previous element as few times as possible (zero or more times)
 
-    return datasetName, subjectID, sessionID, fileID, fileName
+    # return datasetName, subjectID, sessionID, fileID, fileName
+    return datasetName, sub_ses_name, fileID
 
 
 

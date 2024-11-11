@@ -114,6 +114,7 @@ cd ${SUBJECT}/anat
 # Define variables
 # We do a substitution '/' --> '_' in case there is a subfolder 'ses-0X/'
 file="${SUBJECT//[\/]/_}"
+sub_ses="${SUBJECT//[\/]/_}"
 
 # Add suffix corresponding to the view
 file=${file}_acq-ax_T2w
@@ -171,13 +172,19 @@ rsync -avzh $PATH_DATA_PROCESSED/dataset_description.json $PATH_DATA_PROCESSED_C
 # Image
 rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file}_straight.nii.gz $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${file}_desc-straightened.nii.gz
 rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file}.json $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${file}_desc-straightened.json
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file}.nii.gz $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${file}.nii.gz
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file}.json $PATH_DATA_PROCESSED_CLEAN/${SUBJECT}/anat/${file}.json
 
 # Label
 mkdir -p $PATH_DATA_PROCESSED_CLEAN/derivatives $PATH_DATA_PROCESSED_CLEAN/derivatives/labels $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT} $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/
 rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file_seg}_straight.nii.gz $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/${file_seg}_desc-straightened.nii.gz
 # copy the straightened lesion mask
 rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file_lesion}_straight.nii.gz $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/${file_lesion}_desc-straightened.nii.gz
-
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/warp_curve2straight.nii.gz $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/${file}_warp_curve2straight.nii.gz
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/warp_straight2curve.nii.gz $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/${file}_warp_straight2curve.nii.gz
+# copy the lesion and sc seg files as well
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file_seg}.nii.gz $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/${file_seg}.nii.gz
+rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file_lesion}.nii.gz $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/${file_lesion}.nii.gz
 # we need to create a new custom straightened json for SEG and LESIONS!
 # rsync -avzh $PATH_DATA_PROCESSED/${SUBJECT}/anat/${file_lesion}.json $PATH_DATA_PROCESSED_CLEAN/derivatives/labels/${SUBJECT}/anat/${file_lesion}.json
 

@@ -1,34 +1,11 @@
 """
-Convert BIDS-structured whole-spine (from xxx) MS dataset to the nnUNetv2 REGION-BASED and MULTICHANNEL training format
+Convert BIDS-structured Axial T2w chunk MS lesion images to the nnUNetv2 REGION-BASED training format
 depending on the input arguments.
-
-dataset.json:
-
-```json
-    "channel_names": {
-        "0": "acq-ax_T2w"
-    },
-    "labels": {
-        "background": 0,
-        "sc": [
-            1,
-            2
-        ],
-        "lesion": 2
-    },
-    "regions_class_order": [
-        1,
-        2
-    ],
-```
 
 Full details about the format can be found here:
 https://github.com/MIC-DKFZ/nnUNet/blob/master/documentation/dataset_format.md
 
 The script to be used on a single dataset or multiple datasets.
-
-Currently only supports the conversion of a single contrast. In case of multiple contrasts, the script should be
-modified to include those as well.
 
 Note: the script performs RPI reorientation of the images and labels
 
@@ -43,10 +20,11 @@ Usage example single dataset:
         --region-based
         --exclude <path/to/exclude.yml>
 
-Authors: Julian McGinnis, Naga Karthik, Jan Valosek
+Authors: Julian McGinnis, Naga Karthik, Jan Valosek, Pierre-Louis Benveniste
 """
 
 import argparse
+import subprocess
 from pathlib import Path
 import json
 import os
@@ -56,14 +34,16 @@ import yaml
 from collections import OrderedDict
 from loguru import logger
 from sklearn.model_selection import train_test_split
-from utils import binarize_label, create_region_based_label, get_git_branch_and_commit, Image, create_multi_channel_label_input
+from utils import binarize_label, create_region_based_label, get_git_branch_and_commit, Image
 from tqdm import tqdm
 import nibabel as nib
 
 
 LABEL_SUFFIXES = {
-    "muc": ["seg-manual", "lesion-manual"],
-    "straight": ["seg-manual_desc-straightened", "lesion-manual_desc-straightened"],
+    "tum": ["seg-manual", "lesion-manual"],
+    "nyu": ["seg-manual", "lesion-manual"],
+    "bwh": ["seg-manual", "lesion-manual"],
+    "ucsf": ["seg-manual", "lesion-manual"],
 }
 
 
@@ -72,6 +52,8 @@ def get_parser():
     parser = argparse.ArgumentParser(description='Convert BIDS-structured dataset to nnUNetV2 REGION-BASED format.')
     parser.add_argument('--path-data', nargs='+', required=True, type=str,
                         help='Path to BIDS dataset(s) (list).')
+    parser.add_argument('--path-json', type=str, default=None,
+                        help='Path to the JSON file containing NeuroPoly and TUM Axial T2w images.')
     parser.add_argument('--path-out', help='Path to output directory.', required=True)
     parser.add_argument('--dataset-name', '-dname', default='DCMlesionsRegionBased', type=str,
                         help='Specify the task name.')
@@ -81,8 +63,6 @@ def get_parser():
                         help='Seed to be used for the random number generator split into training and test sets.')
     parser.add_argument('--region-based', action='store_true', default=False,
                         help='If set, the script will create labels for region-based nnUNet training. Default: True')
-    parser.add_argument('--multichannel', action='store_true', default=False,
-                        help='If set, the script will create multi-channel input (image + SC seg) nnUNet training. Default: False')
     # argument that accepts a list of floats as train val test splits
     parser.add_argument('--split', nargs='+', type=float, default=[0.8, 0.2],
                         help='Ratios of training (includes validation) and test splits lying between 0-1. Example: '
@@ -113,27 +93,6 @@ def get_region_based_label(subject_label_file, subject_image_file, site_name, su
     return combined_seg_file
 
 
-def get_multi_channel_label_input(subject_label_file, subject_image_file, site_name, sub_ses_name, thr=0.5):
-    # define path for sc seg file
-    subject_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', f'_{LABEL_SUFFIXES[site_name][0]}')
-
-    # check if the seg file exists
-    if not os.path.exists(subject_seg_file):
-        logger.info(f"Spinal cord segmentation file for subject {sub_ses_name} does not exist. Skipping.")
-        return None
-
-    # create label for the multi-channel training. Here, the label is the SC seg that will be the 2nd channel in the input
-    # along with the image. (we ensure that the lesion seg is part of the spinal cord seg
-    seg_lesion_nii = create_multi_channel_label_input(subject_label_file, subject_seg_file, subject_image_file,
-                                                      sub_ses_name, thr=thr)
-
-    # save the region-based label
-    combined_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', '_sc')
-    nib.save(seg_lesion_nii, combined_seg_file)
-
-    return combined_seg_file
-
-
 def create_directories(path_out, site):
     """Create test directories for a specified site.
 
@@ -141,36 +100,48 @@ def create_directories(path_out, site):
     path_out (str): Base output directory.
     site (str): Site identifier, such as 'dcm-zurich-lesions
     """
-    # if site in TRAIN_ONLY_SITES:
-    #     pass
-    # else:
-    paths = [Path(path_out, f'imagesTs_{site}'),
-             Path(path_out, 'imagesTs_native'),
-             Path(path_out, f'labelsTs_{site}'),
-             Path(path_out, f'labelsTs_native'),
-             Path(path_out, 'warpingTs_straight_to_native')]
+    # keep nyu only for training
+    if site == 'nyu':
+        pass
+    else:
+        paths = [Path(path_out, f'imagesTs_{site}'),
+                Path(path_out, f'labelsTs_{site}'),]
 
-    for path in paths:
-        path.mkdir(parents=True, exist_ok=True)
+        for path in paths:
+            path.mkdir(parents=True, exist_ok=True)
 
 
-def find_type_in_path(path):
-    """Extracts site identifier from the given path.
-
-    Args:
-    path (str): Input path containing a site identifier.
-
-    Returns:
-    str: Extracted site identifier or None if not found.
+def fetch_subject_nifti_details(filename_path):
     """
-    # Find 'dcm-zurich-lesions' or 'dcm-zurich-lesions-20231115'
-    if 'clean' in path:
-        match = 'straight'
-    elif 'spine' in path:
-        match = 'muc'
+    Get subject ID, session ID and filename from the input BIDS-compatible filename or file path
+    The function works both on absolute file path as well as filename
+    :param filename_path: input nifti filename (e.g., sub-001_ses-01_T1w.nii.gz) or file path
+    (e.g., /home/user/MRI/bids/derivatives/labels/sub-001/ses-01/anat/sub-001_ses-01_T1w.nii.gz
+    :return: subject_session: subject ID and session ID (e.g., sub-001_ses-01) or subject ID (e.g., sub-001)
+    Taken from: 
+    """
 
-    return [match] if match else None
-    # return match.group(0) if match else None
+    subject = re.search('sub-(.*?)[_/]', filename_path)     # [_/] means either underscore or slash
+    subjectID = subject.group(0)[:-1] if subject else ""    # [:-1] removes the last underscore or slash
+
+    session = re.search('ses-(.*?)[_/]', filename_path)     # [_/] means either underscore or slash
+    sessionID = session.group(0)[:-1] if session else ""    # [:-1] removes the last underscore or slash
+
+    orientation = re.search('acq-(.*?)[_/]', filename_path)     # [_/] means either underscore or slash
+    orientationID = orientation.group(0)[:-1] if orientation else ""    # [:-1] removes the last underscore or slash
+
+    # search only for axial T2w images
+    contrast_pattern =  r'.*_(acq-ax_T2w).*'
+    contrast = re.search(contrast_pattern, filename_path)
+    contrastID = contrast.group(1) if contrast else ""
+
+    # REGEX explanation
+    # . - match any character (except newline)
+    # *? - match the previous element as few times as possible (zero or more times)
+
+    # subject_session = subjectID + '_' + sessionID if subjectID and sessionID else subjectID
+    return subjectID, sessionID, orientationID, contrastID
+
 
 def create_yaml(train_niftis, test_nifitis, path_out, args, train_ctr, test_ctr, dataset_commits):
     # create a yaml file containing the list of training and test niftis
@@ -214,17 +185,6 @@ def create_yaml(train_niftis, test_nifitis, path_out, args, train_ctr, test_ctr,
             "lesion": 2,
         }
         json_dict['regions_class_order'] = [1, 2]
-
-    elif args.multichannel:
-        json_dict['channel_names'] = {
-            0: "acq-ax_T2w",
-            1: "sc",
-        }
-
-        json_dict['labels'] = {
-            "background": 0,
-            "lesion": 1,
-        }
 
     else:
         json_dict['channel_names'] = {
@@ -283,72 +243,121 @@ def main():
         logger.info(f"Excluded subjects: {excluded_subs}")
         logger.info(f"Number of excluded subjects: {len(excluded_subs)}")
 
-    # define site
-    sites = find_type_in_path(args.path_data[0])
-    # Single site
-    create_directories(path_out, sites[0])
+    # get all the lesion files from the json file that PL created and shared
+    path_json = args.path_json
+    all_lesion_files_testing_large = []
+    if path_json is not None:
+        with open(path_json, "r") as f:
+            file = json.load(f)
+            for split in ["train", "validation", "test"]:
+                for case in file[split]:
+                    if case['site'] == 'sct-testing-large':
+                        all_lesion_files_testing_large.append(case['label'])
 
-    all_lesion_files, train_images, test_images = [], {}, {}
+    # create directories for each site
+    sites = list(LABEL_SUFFIXES.keys())
+    for site in sites:
+        create_directories(path_out, site)
+
+    all_lesion_files, train_images, test_images =[], {}, {}
     # temp dict for storing dataset commits
     dataset_commits = {}
+
+    lesion_files_nyu, lesion_files_ucsf, lesion_files_bwh = [], [], []
+    subjects_tum, subjects_nyu, subjects_ucsf, subjects_bwh = [], [], [], []
+    # split all lesion files from testing large into individual sites
+    for lesion_file in all_lesion_files_testing_large:
+        subject_id = fetch_subject_nifti_details(lesion_file)[0]
+        if subject_id.startswith("sub-nyuShepherd"):
+            lesion_files_nyu.append(lesion_file)
+            subjects_nyu.append(subject_id)
+        elif subject_id.startswith("sub-ucsf"):
+            lesion_files_ucsf.append(lesion_file)
+            subjects_ucsf.append(subject_id)
+        elif subject_id.startswith("sub-bwh"):
+            lesion_files_bwh.append(lesion_file)
+            subjects_bwh.append(subject_id)
 
     # loop over the datasets
     for dataset in args.path_data:
         root = Path(dataset)
+        print(root)
 
         # get the git branch and commit ID of the dataset
         dataset_name = os.path.basename(os.path.normpath(dataset))
         branch, commit = get_git_branch_and_commit(dataset)
         dataset_commits[dataset_name] = f"git-{branch}-{commit}"
-        site_name = sites[0]
+        site_name = 'tum' if "bavaria" in dataset_name else 'testing-large'
 
-        # get recursively all GT '_label-lesion' files
-        lesion_label_suffix = LABEL_SUFFIXES[site_name][1]
-        lesion_files = [str(path) for path in root.rglob(f'*_{lesion_label_suffix}.nii.gz')]
+        if site_name == 'tum':
+            # get recursively all GT '_label-lesion' files
+            lesion_label_suffix = LABEL_SUFFIXES[site_name][1]
+            lesion_files = [str(path) for path in root.rglob(f'*_{lesion_label_suffix}.nii.gz')]
+            # for straigteneing preprocessing, chunk-4 images were removed because there was no SC to straighten
+            # remove the chunk-4 images from the list
+            subjects_tum = [fetch_subject_nifti_details(file)[0] for file in lesion_files]
+            all_lesion_files.extend(lesion_files)
+        # else:
+        #     subjects_testing_large = [fetch_subject_nifti_details(file)[0] for file in all_lesion_files_testing_large]
+        #     all_lesion_files.extend(all_lesion_files_testing_large)
+    
+    # add lesion files for other sites
+    all_lesion_files.extend(lesion_files_nyu)
+    all_lesion_files.extend(lesion_files_ucsf)
+    all_lesion_files.extend(lesion_files_bwh)
 
-        # for straigteneing preprocessing, chunk-4 images were removed because there was no SC to straighten
-        # remove the chunk-4 images from the list
-        if sites[0] == 'muc':
-            lesion_files = [file for file in lesion_files if 'chunk-4' not in file]
+    # Get the training and test splits
+    # NOTE: we need a patient-wise split (not image-wise split) to ensure that the same patient is not 
+    # present in both training and test sets
+    subjects_tum = sorted(list(set(subjects_tum)))
+    subjects_ucsf, subjects_bwh = sorted(list(set(subjects_ucsf))), sorted(list(set(subjects_bwh)))
+    subjects_nyu = sorted(list(set(subjects_nyu)))
+    
+    # exclude the subjects that are in the exclude list
+    if args.exclude is not None:
+        subs_tum = [sub for sub in subjects_tum if sub not in excluded_subs]
 
-        # add to the list of all subjects
-        all_lesion_files.extend(lesion_files)
+    logger.info(f"Found subjects in the tum dataset: {len(subs_tum)}")
+    logger.info(f"Found subjects in the sct-testing-large: ")
+    logger.info(f"\tNYU: {len(subjects_nyu)}")
+    logger.info(f"\tBWH: {len(subjects_bwh)}")
+    logger.info(f"\tUCSF: {len(subjects_ucsf)}")
 
-        # Get the training and test splits
-        # NOTE: we need a patient-wise split (not image-wise split) to ensure that the same patient is not present in both
-        # training and test sets
-        subs = sorted([sub for sub in os.listdir(os.path.join(root, 'derivatives', 'labels'))])
-        # exclude the subjects that are in the exclude list
-        if args.exclude is not None:
-            subs = [sub for sub in subs if sub not in excluded_subs]
+    tr_subs_tum, te_subs_tum = train_test_split(subs_tum, test_size=test_ratio, random_state=args.seed)
 
-        tr_subs, te_subs = train_test_split(subs, test_size=test_ratio, random_state=args.seed)
+    # tr_subs_testing_large, te_subs_testing_large = train_test_split(
+    #     subjects_testing_large, test_size=test_ratio, random_state=args.seed)
+    
+    # add only nyu site for training
+    for sub in tr_subs_tum + subjects_nyu:
+        # get the lesion files for the subject
+        lesion_files_sub = [file for file in all_lesion_files if sub in file]
 
-        for sub in tr_subs:
-            # get the lesion files for the subject
-            lesion_files_sub = [file for file in lesion_files if sub in file]
+        for lesion_file in lesion_files_sub:
+            if not os.path.exists(lesion_file):
+                logger.info(f"Lesion file {lesion_file} does not exist. Skipping.")
+                continue
+            # add the lesion file to the training set
+            train_images[lesion_file] = lesion_file
 
-            for lesion_file in lesion_files_sub:
-                if not os.path.exists(lesion_file):
-                    logger.info(f"Lesion file {lesion_file} does not exist. Skipping.")
-                    continue
-                # add the lesion file to the training set
-                train_images[lesion_file] = lesion_file
+    # logger.info(f"len test set TUM: {len(te_subs_tum)}")
+    # logger.info(f"len test set TESTING_LARGE: {len(te_subs_testing_large)}")
+    for sub in te_subs_tum + subjects_ucsf + subjects_bwh:
+        # get the lesion files for the subject
+        lesion_files_sub = [file for file in all_lesion_files if sub in file]
 
-        for sub in te_subs:
-            # get the lesion files for the subject
-            lesion_files_sub = [file for file in lesion_files if sub in file]
+        for lesion_file in lesion_files_sub:
+            if not os.path.exists(lesion_file):
+                logger.info(f"Lesion file {lesion_file} does not exist. Skipping.")
+                continue
+            # add the lesion file to the test set
+            test_images[lesion_file] = lesion_file
 
-            for lesion_file in lesion_files_sub:
-                if not os.path.exists(lesion_file):
-                    logger.info(f"Lesion file {lesion_file} does not exist. Skipping.")
-                    continue
-                # add the lesion file to the test set
-                test_images[lesion_file] = lesion_file
-
-    logger.info(f"Found subjects in the training set (combining all datasets): {len(train_images)}")
-    logger.info(f"Found subjects in the test set (combining all datasets): {len(test_images)}")
-
+    logger.info(f"Total subjects (not images) in the training set: {len(tr_subs_tum) + len(subjects_nyu)}")
+    logger.info(f"Total subjects (not images) in the test set: {len(te_subs_tum) + len(subjects_ucsf) + len(subjects_bwh)}")
+    logger.info(f"Total images in the training set: {len(train_images)}")
+    logger.info(f"Total images in the test set: {len(test_images)}")
+    logger.info(f"len(all lesion files): {len(all_lesion_files)}")
     # print version of each dataset in a separate line
     for dataset_name, dataset_commit in dataset_commits.items():
         logger.info(f"{dataset_name} dataset version: {dataset_commit}")
@@ -358,22 +367,45 @@ def main():
     train_niftis, test_nifitis = [], []
     # Loop over all images
     for subject_label_file in tqdm(all_lesion_files, desc="Iterating over all images"):
-
-        site_name = sites[0]
-        # Construct path to the background image
-        if site_name == 'muc':
+        
+        subject_id = fetch_subject_nifti_details(subject_label_file)[0]
+        if subject_id.startswith("sub-m"):
+            site_name = 'tum'
+            # Construct path to the background image
             subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
-        elif site_name == 'straight':
-            subject_image_file_native = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
-            # print(subject_image_file_native)
-            subject_label_file_native = subject_label_file.replace(f'{LABEL_SUFFIXES[site_name][1]}', 'lesion-manual')
-            # print(subject_label_file_native)
-            subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '').replace('T2w', 'T2w_desc-straightened')
-            subject_warping_file = subject_label_file.replace("lesion-manual_desc-straightened.nii.gz", "warp_straight2curve.nii.gz")
+
+        else:
+            if subject_id.startswith("sub-nyu"):
+                site_name = 'nyu'   
+            elif subject_id.startswith("sub-ucsf"):
+                site_name = 'ucsf'
+            elif subject_id.startswith("sub-bwh"):
+                site_name = 'bwh'
+            # Construct path to the background image
+            subject_image_file = subject_label_file.replace('/derivatives/labels', '').replace(f'_{LABEL_SUFFIXES[site_name][1]}', '')
+
+            # also get the image and label from git-annes
+            # NOTE: sct-testing-large has a lot of images which might/might not have labels. 
+            # Get only those images which have labels and are present in the dataframe (and belong to the pathology)
+            dataset_path = "/home/GRAMES.POLYMTL.CA/u114716/datasets/sct-testing-large"
+            gitannex_cmd_label = f'cd {dataset_path}; git annex get {subject_label_file}'
+            gitannex_cmd_image = f'cd {dataset_path}; git annex get {subject_image_file}'
+            
+            # download also the sc seg file
+            subject_seg_file = subject_label_file.replace(f'_{LABEL_SUFFIXES[site_name][1]}', f'_{LABEL_SUFFIXES[site_name][0]}')
+            gitannex_cmd_seg = f'cd {dataset_path}; git annex get {subject_seg_file}'
+            try:
+                subprocess.run(gitannex_cmd_image, shell=True, check=True)
+                subprocess.run(gitannex_cmd_label, shell=True, check=True)
+                subprocess.run(gitannex_cmd_seg, shell=True, check=True)
+                logger.info(f"Downloaded {os.path.basename(subject_image_file)} from git-annex")
+                logger.info(f"Downloaded {os.path.basename(subject_label_file)} from git-annex")
+                logger.info(f"Downloaded {os.path.basename(subject_seg_file)} from git-annex")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error in downloading {file} from git-annex: {e}")
 
         # Train images
         if subject_label_file in train_images.keys():
-            continue
 
             train_ctr += 1
             # add the subject image file to the list of training niftis
@@ -387,24 +419,8 @@ def main():
             subject_label_file_nnunet = os.path.join(path_out_labelsTr,
                                                     f"{args.dataset_name}_{sub_name}_{train_ctr:03d}.nii.gz")
 
-            if args.multichannel:
-                if args.region_based:
-                    raise ValueError("Multi-channel input is not supported with region-based labels.")
-
-                # channel 0: image, channel 1: SC seg
-                subject_sc_file_nnunet = os.path.join(path_out_imagesTr,
-                                                      f"{args.dataset_name}_{sub_name}_{train_ctr:03d}_0001.nii.gz")
-
-                # overwritten the subject_sc_file_nnunet with the label for multi-channel training (lesion is part of SC)
-                subject_sc_file = get_multi_channel_label_input(subject_label_file, subject_image_file,
-                                                                site_name, sub_name, thr=0.5)
-
-                if subject_sc_file is None:
-                    print(f"Skipping since the multi-channel label could not be generated")
-                    continue
-
             # use region-based labels if required
-            elif args.region_based:
+            if args.region_based:
                 # overwritten the subject_label_file with the region-based label
                 subject_label_file = get_region_based_label(subject_label_file, subject_image_file,
                                                             site_name, sub_name, thr=0.5)
@@ -425,15 +441,12 @@ def main():
             label.change_orientation("RPI")
             label.save(subject_label_file_nnunet)
 
-            if args.multichannel:
-                shutil.copyfile(subject_sc_file, subject_sc_file_nnunet)
-                # convert the SC seg to RPI using the Image class
-                sc_image = Image(subject_sc_file_nnunet)
-                sc_image.change_orientation("RPI")
-                sc_image.save(subject_sc_file_nnunet)
+            # remove the temporary region-based label file
+            if args.region_based:
+                os.remove(subject_label_file)
 
             # don't binarize the label if either of the region-based or multi-channel training is set
-            if not args.region_based and not args.multichannel:
+            if not args.region_based:
                 binarize_label(subject_image_file_nnunet, subject_label_file_nnunet)
 
         # Test images
@@ -450,53 +463,12 @@ def main():
                                                      f'{args.dataset_name}_{sub_name}_{test_ctr:03d}_0000.nii.gz')
             subject_label_file_nnunet = os.path.join(Path(path_out, f'labelsTs_{site_name}'),
                                                      f'{args.dataset_name}_{sub_name}_{test_ctr:03d}.nii.gz')
-
-            if site_name == 'straight':
-                subject_warping_file_nnunet = os.path.join(Path(path_out, f'warpingTs_straight_to_native'),
-                                                     f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}.nii.gz')
-
-                subject_image_file_native_nnunet = os.path.join(Path(path_out, f'imagesTs_native'),
-                                                     f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}_0000.nii.gz')
-                subject_label_file_native_nnunet = os.path.join(Path(path_out, f'labelsTs_native'),
-                                                     f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}.nii.gz')
-
-            if args.multichannel:
-                if args.region_based:
-                    raise ValueError("Multi-channel input is not supported with region-based labels.")
-
-                # channel 0: image, channel 1: SC seg
-                subject_sc_file_nnunet = os.path.join(Path(path_out, f'imagesTs_{site_name}'),
-                                                     f'{args.dataset_name}_{sub_name}_{test_ctr:03d}_0001.nii.gz')
-
-                # overwritten the subject_sc_file_nnunet with the label for multi-channel training (lesion is part of SC)
-                subject_sc_file = get_multi_channel_label_input(subject_label_file, subject_image_file,
-                                                                site_name, sub_name, thr=0.5)
-
-                # if site_name == 'straight':
-                #     # ensure the native label is processed as well
-                #     # channel 0: image, channel 1: SC seg
-                #     subject_sc_file_nnunet_native = os.path.join(Path(path_out, f'imagesTs_{site_name}'),
-                #                                      f'{args.dataset_name}_{sub_name.replace("T2w_desc-straightened","T2w")}_{test_ctr:03d}_0001.nii.gz')
-
-                #     # overwritten the subject_sc_file_nnunet with the label for multi-channel training (lesion is part of SC)
-                #     subject_sc_file_native = get_multi_channel_label_input(subject_label_file_native, subject_image_file_native,
-                #                                                 "muc", sub_name, thr=0.5)
-
-
-                if subject_sc_file is None:
-                    print(f"Skipping since the multi-channel label could not be generated")
-                    continue
-
+            
             # use region-based labels if required
-            elif args.region_based:
+            if args.region_based:
                 # overwritten the subject_label_file with the region-based label
                 subject_label_file = get_region_based_label(subject_label_file, subject_image_file,
                                                             site_name, sub_name, thr=0.5)
-
-                if site_name == 'straight':
-                    # the native label corresponds to the convention of the "muc" site
-                    subject_label_file_native = get_region_based_label(subject_label_file_native, subject_image_file_native,
-                                                            "muc", sub_name.replace("T2w_desc-straightened","T2w"), thr=0.5)
 
                 if subject_label_file is None:
                     continue
@@ -513,37 +485,15 @@ def main():
             label.change_orientation("RPI")
             label.save(subject_label_file_nnunet)
 
-            if site_name == 'straight':
-                # in addition to the straightened images, copy the native files as well
-                shutil.copyfile(subject_warping_file, subject_warping_file_nnunet)
-                shutil.copyfile(subject_image_file_native, subject_image_file_native_nnunet)
-                shutil.copyfile(subject_label_file_native, subject_label_file_native_nnunet)
-
-                image_native = Image(subject_image_file_native_nnunet)
-                image_native.change_orientation("RPI")
-                image_native.save(subject_image_file_native_nnunet)
-
-                warping_field = Image(subject_warping_file_nnunet)
-                warping_field.change_orientation("RPI")
-                warping_field.save(subject_warping_file_nnunet)
-
-                label_native = Image(subject_label_file_native_nnunet)
-                label_native.change_orientation("RPI")
-                label_native.save(subject_label_file_native_nnunet)
-
             # print(f"\nCopying {subject_image_file} to {subject_image_file_nnunet}")
             # convert the image and label to RPI using the Image class
-
-            # TODO? native label
-            if args.multichannel:
-                shutil.copyfile(subject_sc_file, subject_sc_file_nnunet)
-                # convert the SC seg to RPI using the Image class
-                sc_image = Image(subject_sc_file_nnunet)
-                sc_image.change_orientation("RPI")
-                sc_image.save(subject_sc_file_nnunet)
+            
+            # remove the temporary region-based label file
+            if args.region_based:
+                os.remove(subject_label_file)
 
             # don't binarize the label if either of the region-based or multi-channel training is set
-            if not args.region_based and not args.multichannel:
+            if not args.region_based:
                 # to do native label?
                 binarize_label(subject_image_file_nnunet, subject_label_file_nnunet)
 
@@ -552,30 +502,30 @@ def main():
 
     logger.info(f"----- Dataset conversion finished! -----")
     logger.info(f"Number of training and validation images (across all sites): {train_ctr}")
-    # Get number of train and val images per site
-    train_images_per_site = {}
-    for train_subject in train_images:
-        site = sites[0]
-        if site in train_images_per_site:
-            train_images_per_site[site] += 1
-        else:
-            train_images_per_site[site] = 1
-    # Print number of train images per site
-    for site, num_images in train_images_per_site.items():
-        logger.info(f"Number of training and validation images in {site}: {num_images}")
+    # # Get number of train and val images per site
+    # train_images_per_site = {}
+    # for train_subject in train_images:
+    #     site = sites[0]
+    #     if site in train_images_per_site:
+    #         train_images_per_site[site] += 1
+    #     else:
+    #         train_images_per_site[site] = 1
+    # # Print number of train images per site
+    # for site, num_images in train_images_per_site.items():
+    #     logger.info(f"Number of training and validation images in {site}: {num_images}")
 
     logger.info(f"Number of test images (across all sites): {test_ctr}")
-    # Get number of test images per site
-    test_images_per_site = {}
-    for test_subject in test_images:
-        site = sites[0]
-        if site in test_images_per_site:
-            test_images_per_site[site] += 1
-        else:
-            test_images_per_site[site] = 1
-    # Print number of test images per site
-    for site, num_images in test_images_per_site.items():
-        logger.info(f"Number of test images in {site}: {num_images}")
+    # # Get number of test images per site
+    # test_images_per_site = {}
+    # for test_subject in test_images:
+    #     site = sites[0]
+    #     if site in test_images_per_site:
+    #         test_images_per_site[site] += 1
+    #     else:
+    #         test_images_per_site[site] = 1
+    # # Print number of test images per site
+    # for site, num_images in test_images_per_site.items():
+    #     logger.info(f"Number of test images in {site}: {num_images}")
 
     # create the yaml file containing the train and test niftis
     create_yaml(train_niftis, test_nifitis, path_out, args, train_ctr, test_ctr, dataset_commits)

@@ -1,33 +1,7 @@
 #!/bin/bash
 #
 # Compare our nnUNet model with other methods (sct_propseg, sct_deepseg_sc 2d, sct_deepseg_sc 3d,
-# MONAI contrast-agnostic (part of SCT v6.2)) on sci-zurich and sci-colorado datasets
-#
-# Note: subjects from both datasets have to be located in the same BIDS-like folder, example:
-# ├── derivatives
-# │	 └── labels
-# │	     ├── sub-5416   # sci-colorado subject
-# │	     │	 └── anat
-# │	     │	     ├── sub-5416_T2w_lesion-manual.json
-# │	     │	     ├── sub-5416_T2w_lesion-manual.nii.gz
-# │	     │	     ├── sub-5416_T2w_seg-manual.json
-# │	     │	     └── sub-5416_T2w_seg-manual.nii.gz
-# │	     └── sub-zh01   # sci-zurich subject
-# │	         └── ses-01
-# │	             └── anat
-# │	                 ├── sub-zh01_ses-01_acq-sag_T2w_lesion-manual.json
-# │	                 ├── sub-zh01_ses-01_acq-sag_T2w_lesion-manual.nii.gz
-# │	                 ├── sub-zh01_ses-01_acq-sag_T2w_seg-manual.json
-# │	                 └── sub-zh01_ses-01_acq-sag_T2w_seg-manual.nii.gz
-# ├── sub-5416    # sci-colorado subject
-# │	 └── anat
-# │	     ├── sub-5416_T2w.json
-# │	     └── sub-5416_T2w.nii.gz
-# └── sub-zh01    # sci-zurich subject
-#    └── ses-01
-#        └── anat
-#            ├── sub-zh01_ses-01_acq-sag_T2w.json
-#            └── sub-zh01_ses-01_acq-sag_T2w.nii.gz
+# MONAI contrast-agnostic (part of SCT v6.2)) on bavaria-quebec-spine-ms-unstitched dataset.
 #
 # Note: conda environment with nnUNetV2 is required to run this script.
 # For details how to install nnUNetV2, see:
@@ -107,8 +81,6 @@ segment_sc() {
       execution_time=$(python3 -c "print($end_time - $start_time)")
       echo "${FILESEG},${execution_time}" >> ${PATH_RESULTS}/execution_time.csv
 
-      # Compute ANIMA segmentation performance metrics
-      compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
   elif [[ $method == 'propseg' ]]; then
       FILESEG="${file}_seg_${method}"
 
@@ -124,8 +96,6 @@ segment_sc() {
 
       # Remove centerline (we don't need it)
       rm ${file}_centerline.nii.gz
-      # Compute ANIMA segmentation performance metrics
-      compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
   fi
 }
 
@@ -139,7 +109,7 @@ segment_sc_nnUNet(){
   # Get the start time
   start_time=$(date +%s)
   # Run SC segmentation
-  python ${PATH_NNUNET_SCRIPT} -i ${file}.nii.gz -o ${FILESEG}.nii.gz -path-model ${PATH_NNUNET_MODEL}/nnUNetTrainerDiceCELoss_noSmooth__nnUNetPlans__${kernel} -pred-type sc
+  python ${PATH_NNUNET_SCRIPT} -i ${file}.nii.gz -o ${FILESEG}.nii.gz -path-model ${PATH_NNUNET_MODEL}/nnUNetTrainerDiceCELoss_noSmooth__nnUNetPlans__${kernel} -pred-type sc -use-gpu
   # Get the end time
   end_time=$(date +%s)
   # Calculate the time difference
@@ -148,20 +118,31 @@ segment_sc_nnUNet(){
 
   # Generate QC report
   sct_qc -i ${file}.nii.gz -s ${FILESEG}.nii.gz -p sct_deepseg_sc -qc ${PATH_QC} -qc-subject ${SUBJECT}
-  # Compute ANIMA segmentation performance metrics
-  compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
 }
 
 # Segment spinal cord using the MONAI contrast-agnostic model (part of SCT v6.2)
 segment_sc_MONAI(){
   local file="$1"
+  local version="$2"     # v2.0 or v2.5
 
-  FILESEG="${file}_seg_monai"
+  FILESEG="${file}_seg_monai_${version}"
 
   # Get the start time
   start_time=$(date +%s)
-  # Run SC segmentation using SCT v6.2
-  sct_deepseg -i ${file}.nii.gz -o ${FILESEG}.nii.gz -task seg_sc_contrast_agnostic
+  if [[ $version == 'v2.6' ]]; then
+    # Run SC segmentation
+    PATH_MODEL="/home/GRAMES.POLYMTL.CA/u114716/contrast-agnostic/saved_models/lifelong/nnunet-plain_seed=50_ndata=15_ncont=11_nf=384_opt=adam_lr=0.001_AdapW_bs=2_20241018-0508"
+    PATH_MONAI_SCRIPT="/home/GRAMES.POLYMTL.CA/u114716/contrast-agnostic/contrast-agnostic-softseg-spinalcord/monai/run_inference_single_image.py"
+    python ${PATH_MONAI_SCRIPT} --path-img ${file}.nii.gz --path-out . --chkp-path ${PATH_MODEL} --device gpu --model monai --pred-type soft --pad-mode edge --max-feat 384
+    # Rename MONAI output
+    mv ${file}_pred.nii.gz ${FILESEG}.nii.gz
+    # Binarize MONAI output (which is soft by default); output is overwritten
+    sct_maths -i ${FILESEG}.nii.gz -bin 0.5 -o ${FILESEG}.nii.gz
+
+  else
+    # Run SC segmentation using SCT v6.2
+    sct_deepseg -task seg_sc_contrast_agnostic -i ${file}.nii.gz -o ${FILESEG}.nii.gz
+  fi
   # Get the end time
   end_time=$(date +%s)
   # Calculate the time difference
@@ -170,27 +151,6 @@ segment_sc_MONAI(){
 
   # Generate QC report
   sct_qc -i ${file}.nii.gz -s ${FILESEG}.nii.gz -p sct_deepseg_sc -qc ${PATH_QC} -qc-subject ${SUBJECT}
-  # Compute ANIMA segmentation performance metrics
-  compute_anima_metrics ${FILESEG} ${file}_seg-manual.nii.gz
-}
-
-# Compute ANIMA segmentation performance metrics
-compute_anima_metrics(){
-  # We have to copy qform matrix from seg-manual to the automatically generated segmentation to avoid ITK error:
-  # "Description: ITK ERROR: SegmentationMeasuresImageFilter(): Inputs do not occupy the same physical space!"
-  # Related to the following issue : https://github.com/spinalcordtoolbox/spinalcordtoolbox/pull/4135
-  sct_image -i ${file}_seg-manual.nii.gz -copy-header ${FILESEG}.nii.gz -o ${FILESEG}_updated_header.nii.gz
-
-  # Compute ANIMA segmentation performance metrics
-  # -i : input segmentation
-  # -r : GT segmentation
-  # -o : output file
-  # -d : surface distances evaluation
-  # -s : compute metrics to evaluate a segmentation
-  # -X : stores results into a xml file.
-  ${anima_binaries_path}/animaSegPerfAnalyzer -i ${FILESEG}_updated_header.nii.gz -r ${file}_seg-manual.nii.gz -o ${PATH_RESULTS}/${FILESEG} -d -s -X
-
-  rm ${FILESEG}_updated_header.nii.gz
 }
 
 # Copy GT spinal cord segmentation (located under derivatives/labels)
@@ -219,18 +179,17 @@ start=`date +%s`
 # Display useful info for the log, such as SCT version, RAM and CPU cores available
 sct_check_dependencies -short
 
+# custom_url="https://github.com/sct-pipeline/contrast-agnostic-softseg-spinalcord/releases/download/v2.0/model_2023-09-18.zip"
+# sct_deepseg -install seg_sc_contrast_agnostic -custom-url ${custom_url}
+
 # Go to folder where data will be copied and processed
 cd $PATH_DATA_PROCESSED
 
 # Copy source T2w images
 # Note: we use '/./' in order to include the sub-folder 'ses-0X'
 # We do a substitution '/' --> '_' in case there is a subfolder 'ses-0X/'
-if [[ $SUBJECT =~ "sub-zh" ]]; then
-  # for sci-zurich, copy only sagittal T2w to save space
-  rsync -Ravzh ${PATH_DATA}/./${SUBJECT}/anat/${SUBJECT//[\/]/_}_*sag_T2w.* .
-else
-  rsync -Ravzh ${PATH_DATA}/./${SUBJECT}/anat/${SUBJECT//[\/]/_}_*T2w.* .
-fi
+rsync -Ravzh ${PATH_DATA}/./${SUBJECT}/anat/${SUBJECT//[\/]/_}_*ax_chunk-*.nii.gz .
+# rsync -Ravzh ${PATH_DATA}/./${SUBJECT}/anat/${SUBJECT//[\/]/_}_*ax_T2w.nii.gz .
 
 # Go to subject folder for source images
 cd ${SUBJECT}/anat
@@ -238,32 +197,67 @@ cd ${SUBJECT}/anat
 # ------------------------------------------------------------------------------
 # T2w
 # ------------------------------------------------------------------------------
-# sci-zurich
-if [[ $SUBJECT =~ "sub-zh" ]]; then
-    # We do a substitution '/' --> '_' in case there is a subfolder 'ses-0X/'
-    file_t2="${SUBJECT//[\/]/_}"_acq-sag_T2w
-# sci-colorado
-else
-    file_t2="${SUBJECT}"_T2w
-fi
+# run a counter from 0 to 4 for the chunks
+for i in {1..3}; do
+# for i in {1}; do
+    # Define T2w file
+    file_t2="${SUBJECT//[\/]/_}_acq-ax_chunk-${i}_T2w"
+    # file_t2="${SUBJECT//[\/]/_}_acq-ax_T2w"
 
-# Copy GT spinal cord segmentation
-copy_gt "${file_t2}"
+    # Copy GT spinal cord segmentation
+    copy_gt "${file_t2}"
 
-# Check if file_t2 exists
-if [[ ! -e ${file_t2}.nii.gz ]]; then
-    echo "File ${file_t2}.nii.gz does not exist" >> ${PATH_LOG}/missing_files.log
-    echo "ERROR: File ${file_t2}.nii.gz does not exist. Exiting."
-    exit 1
-fi
+    # Check if file_t2 exists
+    if [[ ! -e ${file_t2}.nii.gz ]]; then
+        echo "File ${file_t2}.nii.gz does not exist" >> ${PATH_LOG}/missing_files.log
+        echo "ERROR: File ${file_t2}.nii.gz does not exist. Exiting."
+        exit 1
+    fi
 
-# Segment SC using different methods and compute ANIMA segmentation performance metrics
-segment_sc "${file_t2}" 't2' 'deepseg' '2d'
-segment_sc "${file_t2}" 't2' 'deepseg' '3d'
-segment_sc "${file_t2}" 't2' 'propseg'
-segment_sc_nnUNet "${file_t2}" '2d'
-segment_sc_nnUNet "${file_t2}" '3d_fullres'
-segment_sc_MONAI "${file_t2}"
+    # Segment SC using different methods and compute ANIMA segmentation performance metrics
+    CUDA_VISIBLE_DEVICES=2 segment_sc_MONAI "${file_t2}" 'v2.6'
+    CUDA_VISIBLE_DEVICES=3 segment_sc_MONAI "${file_t2}" 'v2.5'
+    # CUDA_VISIBLE_DEVICES=3 segment_sc_nnUNet "${file_t2}" '3d_fullres'
+    # # segment_sc_nnUNet "${file_t2}" '3d_fullres'
+    segment_sc "${file_t2}" 't2' 'propseg'
+    segment_sc "${file_t2}" 't2' 'deepseg' '2d'
+    # segment_sc "${file_t2}" 't2' 'deepseg' '3d'
+
+    
+done
+
+# methods_to_compare="propseg deepseg_2d deepseg_3d monai_v2.0 nnunet_2d"
+methods_to_compare="propseg deepseg_2d monai_v2.5 monai_v2.6" # monai_v2.4"
+
+# mkdir -p ${PATH_RESULTS}/GTs
+# # copy the GTs to the results folder
+# rsync -avzh ${PATH_DATA}/derivatives/labels/${SUBJECT}/anat/${SUBJECT//[\/]/_}_*ax_T2w_seg-manual.nii.gz ${PATH_RESULTS}/GTs
+
+# for method in ${methods_to_compare}; do
+#     # create multiple sub-folders within the results folder
+#     mkdir -p ${PATH_RESULTS}/preds/${method}
+#     # Define T2w file
+#     file_t2="${SUBJECT//[\/]/_}_acq-ax_T2w"
+#     # copy the predictions to the results folder
+#     rsync -avzh ${file_t2}_seg_${method}.nii.gz ${PATH_RESULTS}/preds/${method}
+# done
+
+for i in {1..3}; do
+
+  mkdir -p ${PATH_RESULTS}/GTs/chunk-${i}
+  # copy the GTs to the results folder
+  rsync -avzh ${PATH_DATA}/derivatives/labels/${SUBJECT}/anat/${SUBJECT//[\/]/_}_*ax_chunk-${i}_T2w_seg-manual.nii.gz ${PATH_RESULTS}/GTs/chunk-${i}
+
+  for method in ${methods_to_compare}; do
+      # create multiple sub-folders within the results folder
+      mkdir -p ${PATH_RESULTS}/preds/${method}/chunk-${i}
+      # Define T2w file
+      file_t2="${SUBJECT//[\/]/_}_acq-ax_chunk-${i}_T2w"
+      # copy the predictions to the results folder
+      rsync -avzh ${file_t2}_seg_${method}.nii.gz ${PATH_RESULTS}/preds/${method}/chunk-${i}
+  done
+
+done
 
 # ------------------------------------------------------------------------------
 # End

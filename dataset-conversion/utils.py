@@ -8,6 +8,40 @@ import subprocess
 logger = logging.getLogger(__name__)
 
 
+def get_orientation(image_path):
+    """
+    This function takes an image file as input and returns its orientation.
+
+    Input:
+        image_path : str : Path to the image file
+
+    Returns:
+        orientation : str : Orientation of the image
+    """
+    img = Image(str(image_path))
+    img.change_orientation('RPI')
+    # Get pixdim
+    print(f'img.dim: {img.dim}')
+    pixdim = img.dim[4:7]
+    print(f'pixdim: {pixdim}')
+    # If all are the same, the image is isotropic
+    print(np.allclose(pixdim, pixdim[0], atol=1e-3))
+    print(f'np.argmax(pixdim): {np.argmax(pixdim)}')
+    if np.allclose(pixdim, pixdim[0], atol=1e-3):
+        orientation = 'iso'
+        return orientation
+    # Elif, the lowest arg is 0 then the orientation is sagittal
+    elif np.argmax(pixdim) == 0:
+        orientation = 'sag'
+    # Elif, the lowest arg is 1 then the orientation is coronal
+    elif np.argmax(pixdim) == 1:
+        orientation = 'cor'
+    # Else the orientation is axial
+    else:
+        orientation = 'ax'
+    return orientation
+
+
 def binarize_label(subject_path, label_path):
     label_npy = nib.load(label_path).get_fdata()
     threshold = 0.5
@@ -814,3 +848,9 @@ def find_zmin_zmax(im, threshold=0.1):
             break
 
     return zmin, zmax
+
+
+if __name__ == '__main__':
+    image_path = '/home/GRAMES.POLYMTL.CA/u114716/datasets/sci-zurich/sub-zh03/ses-01/anat/sub-zh03_ses-01_acq-sag_T2w.nii.gz'
+    orientation = get_orientation(image_path)
+    print(orientation)
