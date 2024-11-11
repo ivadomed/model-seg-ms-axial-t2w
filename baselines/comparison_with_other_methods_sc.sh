@@ -109,7 +109,7 @@ segment_sc_nnUNet(){
   # Get the start time
   start_time=$(date +%s)
   # Run SC segmentation
-  python ${PATH_NNUNET_SCRIPT} -i ${file}.nii.gz -o ${FILESEG}.nii.gz -path-model ${PATH_NNUNET_MODEL}/nnUNetTrainerDiceCELoss_noSmooth__nnUNetPlans__${kernel} -pred-type sc
+  python ${PATH_NNUNET_SCRIPT} -i ${file}.nii.gz -o ${FILESEG}.nii.gz -path-model ${PATH_NNUNET_MODEL}/nnUNetTrainerDiceCELoss_noSmooth__nnUNetPlans__${kernel} -pred-type sc -use-gpu
   # Get the end time
   end_time=$(date +%s)
   # Calculate the time difference
@@ -125,16 +125,24 @@ segment_sc_MONAI(){
   local file="$1"
   local version="$2"     # v2.0 or v2.5
 
-  if [[ $version == 'v2.0' ]]; then
-    FILESEG="${file}_seg_monai_v2.0"
-  elif [[ $version == 'v2.4' ]]; then
-    FILESEG="${file}_seg_monai_v2.4"
-  fi
+  FILESEG="${file}_seg_monai_${version}"
 
   # Get the start time
   start_time=$(date +%s)
-  # Run SC segmentation using SCT v6.2
-  sct_deepseg -task seg_sc_contrast_agnostic -i ${file}.nii.gz -o ${FILESEG}.nii.gz
+  if [[ $version == 'v2.6' ]]; then
+    # Run SC segmentation
+    PATH_MODEL="/home/GRAMES.POLYMTL.CA/u114716/contrast-agnostic/saved_models/lifelong/nnunet-plain_seed=50_ndata=15_ncont=11_nf=384_opt=adam_lr=0.001_AdapW_bs=2_20241018-0508"
+    PATH_MONAI_SCRIPT="/home/GRAMES.POLYMTL.CA/u114716/contrast-agnostic/contrast-agnostic-softseg-spinalcord/monai/run_inference_single_image.py"
+    python ${PATH_MONAI_SCRIPT} --path-img ${file}.nii.gz --path-out . --chkp-path ${PATH_MODEL} --device gpu --model monai --pred-type soft --pad-mode edge --max-feat 384
+    # Rename MONAI output
+    mv ${file}_pred.nii.gz ${FILESEG}.nii.gz
+    # Binarize MONAI output (which is soft by default); output is overwritten
+    sct_maths -i ${FILESEG}.nii.gz -bin 0.5 -o ${FILESEG}.nii.gz
+
+  else
+    # Run SC segmentation using SCT v6.2
+    sct_deepseg -task seg_sc_contrast_agnostic -i ${file}.nii.gz -o ${FILESEG}.nii.gz
+  fi
   # Get the end time
   end_time=$(date +%s)
   # Calculate the time difference
@@ -181,6 +189,7 @@ cd $PATH_DATA_PROCESSED
 # Note: we use '/./' in order to include the sub-folder 'ses-0X'
 # We do a substitution '/' --> '_' in case there is a subfolder 'ses-0X/'
 rsync -Ravzh ${PATH_DATA}/./${SUBJECT}/anat/${SUBJECT//[\/]/_}_*ax_chunk-*.nii.gz .
+# rsync -Ravzh ${PATH_DATA}/./${SUBJECT}/anat/${SUBJECT//[\/]/_}_*ax_T2w.nii.gz .
 
 # Go to subject folder for source images
 cd ${SUBJECT}/anat
@@ -190,8 +199,10 @@ cd ${SUBJECT}/anat
 # ------------------------------------------------------------------------------
 # run a counter from 0 to 4 for the chunks
 for i in {1..3}; do
+# for i in {1}; do
     # Define T2w file
     file_t2="${SUBJECT//[\/]/_}_acq-ax_chunk-${i}_T2w"
+    # file_t2="${SUBJECT//[\/]/_}_acq-ax_T2w"
 
     # Copy GT spinal cord segmentation
     copy_gt "${file_t2}"
@@ -204,19 +215,32 @@ for i in {1..3}; do
     fi
 
     # Segment SC using different methods and compute ANIMA segmentation performance metrics
-    CUDA_VISIBLE_DEVICES=2 segment_sc_MONAI "${file_t2}" 'v2.0'
-    # # segment_sc_MONAI "${file_t2}" 'v2.4'
-    CUDA_VISIBLE_DEVICES=3 segment_sc_nnUNet "${file_t2}" '2d'
+    CUDA_VISIBLE_DEVICES=2 segment_sc_MONAI "${file_t2}" 'v2.6'
+    CUDA_VISIBLE_DEVICES=3 segment_sc_MONAI "${file_t2}" 'v2.5'
+    # CUDA_VISIBLE_DEVICES=3 segment_sc_nnUNet "${file_t2}" '3d_fullres'
     # # segment_sc_nnUNet "${file_t2}" '3d_fullres'
     segment_sc "${file_t2}" 't2' 'propseg'
     segment_sc "${file_t2}" 't2' 'deepseg' '2d'
-    segment_sc "${file_t2}" 't2' 'deepseg' '3d'
+    # segment_sc "${file_t2}" 't2' 'deepseg' '3d'
 
     
 done
 
-methods_to_compare="propseg deepseg_2d deepseg_3d monai_v2.0 nnunet_2d"
-# methods_to_compare="monai_v2.0 nnunet_2d" # monai_v2.4"
+# methods_to_compare="propseg deepseg_2d deepseg_3d monai_v2.0 nnunet_2d"
+methods_to_compare="propseg deepseg_2d monai_v2.5 monai_v2.6" # monai_v2.4"
+
+# mkdir -p ${PATH_RESULTS}/GTs
+# # copy the GTs to the results folder
+# rsync -avzh ${PATH_DATA}/derivatives/labels/${SUBJECT}/anat/${SUBJECT//[\/]/_}_*ax_T2w_seg-manual.nii.gz ${PATH_RESULTS}/GTs
+
+# for method in ${methods_to_compare}; do
+#     # create multiple sub-folders within the results folder
+#     mkdir -p ${PATH_RESULTS}/preds/${method}
+#     # Define T2w file
+#     file_t2="${SUBJECT//[\/]/_}_acq-ax_T2w"
+#     # copy the predictions to the results folder
+#     rsync -avzh ${file_t2}_seg_${method}.nii.gz ${PATH_RESULTS}/preds/${method}
+# done
 
 for i in {1..3}; do
 
@@ -231,27 +255,9 @@ for i in {1..3}; do
       file_t2="${SUBJECT//[\/]/_}_acq-ax_chunk-${i}_T2w"
       # copy the predictions to the results folder
       rsync -avzh ${file_t2}_seg_${method}.nii.gz ${PATH_RESULTS}/preds/${method}/chunk-${i}
-
   done
 
 done
-
-# # Run MetricsReloaded 
-# metrics_to_compute="dsc nsd rel_vol_error"
-# for method in ${methods_to_compare}; do
-
-#   for i in {1..3}; do
-
-#     python ~/tum-poly/MetricsReloaded/compute_metrics_reloaded.py \
-#         -reference ${PATH_RESULTS}/GTs/chunk-${i} \
-#         -prediction ${PATH_RESULTS}/${method}/preds/chunk-${i} \
-#         -output ${PATH_RESULTS}/${method}/preds/chunk-${i}/metrics_final_${method}_sc.csv \
-#         -metrics ${metrics_to_compute} \
-#         -jobs 8
-#   done
-
-# done
-
 
 # ------------------------------------------------------------------------------
 # End
