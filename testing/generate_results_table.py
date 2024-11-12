@@ -18,9 +18,11 @@ metrics_to_rename = {
 }
 
 models_to_rename = {
-    'DeepSegLesionInference_tumNeuropoly': 'DeepSeg\nLesion',
-    'Dataset901_tumMSChunksRegion': 'ChunksNative\nSingleSite',
-    'Dataset910_tumMSChunksPolyNYUAxialRegion': 'ChunksNative\nTwoSites',
+    'DeepSegLesionInference_tumNeuropoly_3D': 'DeepSeg\nLesion',
+    'Dataset901_tumMSChunksRegion_2D': 'ChunksNative\nSingleSite\n2D',
+    'Dataset901_tumMSChunksRegion_3D': 'ChunksNative\nSingleSite\n3D',
+    'Dataset910_tumMSChunksPolyNYUAxialRegion_2D': 'ChunksNative\nTwoSites\n2D',
+    'Dataset910_tumMSChunksPolyNYUAxialRegion_3D': 'ChunksNative\nTwoSites\n3D',
 }
 
 def get_parser():
@@ -34,7 +36,7 @@ def get_parser():
 def create_rows(model, df, metrics_mean_list, metrics_std_list):
     rows = ""
     len_metrics = len(metrics_mean_list)
-    wrapped_model = r"\makecell{" + model.replace('\n', r' \\ ') + r"}"
+    wrapped_model = r"\makecell[l]{" + model.replace('\n', r' \\ ') + r"}"
     for i in range(len_metrics):
         if i == 0:
             rows += f"\\multirow{{{len_metrics}}}{{*}}{{{wrapped_model}}} & {metrics_to_rename[metrics_mean_list[i]]} "
@@ -64,7 +66,7 @@ def main():
             \multirow{3}{*}{\textbf{Model}} & \multirow{3}{*}{\textbf{Metric}} & \multicolumn{1}{c}{\multirow{2}{*}{\textbf{\makecell{Test Site \\ (in-distribution)}}}} & \multicolumn{2}{c}{\multirow{2}{*}{\textbf{\makecell{Test Sites \\ (out-of-distribution)}}}} \\
             \\
             \cline{3-5} & &
-            \multirow{1}{*}{\textbf{TUM}} & \multirow{1}{*}{\textbf{BWH}} & \multirow{1}{*}{\textbf{UCSF}} \\
+            \multirow{1}{*}{\textbf{TUM}$_{(n=126)}$} & \multirow{1}{*}{\textbf{BWH}$_{(n=80)}$} & \multirow{1}{*}{\textbf{UCSF}$_{(n=32)}$} \\
             \hline
     """
 
@@ -77,15 +79,15 @@ def main():
         print(f"Reading {csv}")
         df = pd.read_csv(csv)
 
-        # hacky fix -- set the model to 2D where dataset is 'DeepSegLesionInference_tumNeuropoly'
-        for dataset in df['dataset'].unique():
-            if 'DeepSegLesionInference_tumNeuropoly' in dataset:
-                df.loc[df['dataset'] == dataset, 'model'] = '2D'
-            else:
-                pass
+        # # hacky fix -- set the model to 2D where dataset is 'DeepSegLesionInference_tumNeuropoly'
+        # for dataset in df['dataset'].unique():
+        #     if 'DeepSegLesionInference_tumNeuropoly' in dataset:
+        #         df.loc[df['dataset'] == dataset, 'model'] = '2D'
+        #     else:
+        #         pass
 
-        # remove the rows where models is '3D'
-        df = df[df['model'] != '3D']
+        # # remove the rows where models is '3D'
+        # df = df[df['model'] != '3D']
             
         if df['prediction'].str.contains('sub-m').any():
             df['site'] = 'TUM'
@@ -94,14 +96,21 @@ def main():
         elif df['prediction'].str.contains('sub-ucsf').any():
             df['site'] = 'UCSF'
 
-        # remove the model column
-        df = df.drop(columns=['model', 'reference', 'prediction', 'fold'])
+        # # remove the model column
+        # df = df.drop(columns=['model', 'reference', 'prediction', 'fold'])
 
-        # rename the dataset column to 'model'
-        df = df.rename(columns={'dataset': 'model'})
+        # # rename the dataset column to 'model'
+        # df = df.rename(columns={'dataset': 'model'})
 
         # compute the difference in lesion count
         df['DeltaLesionsCount'] = abs(df['PredLesionsCount'] - df['RefLesionsCount'])
+
+        # merge the dataset column with the model column as dataset_model
+        df['dataset_new'] = df['dataset'] + '_' + df['model']
+        df = df.drop(columns=['dataset', 'model', 'reference', 'prediction', 'fold'])
+
+        # rename the dataset column to 'model'
+        df = df.rename(columns={'dataset_new': 'model'})
 
         # keep only the metrics in metrics_to_include
         df = df[['site', 'model'] + metrics_to_include]
