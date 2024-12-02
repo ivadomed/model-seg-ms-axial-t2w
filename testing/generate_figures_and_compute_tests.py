@@ -39,6 +39,8 @@ metrics_short = {
     'DiceSimilarityCoefficient': 'Dice',
     'RelativeVolumeError': 'RVE',
     'LesionWiseF1Score': 'LesionF1',
+    'NormalizedSurfaceDistance': 'NSD',
+    'DeltaLesionsCount': 'DeltaLesions'
 }
 
 
@@ -470,6 +472,9 @@ def compute_kruskal_wallis_test_across_tum_poly(df_concat, list_of_metrics, test
     df_concat['reference'] = df_concat['reference'].apply(find_filename_in_path)
     df_concat['prediction'] = df_concat['prediction'].apply(find_filename_in_path)
 
+    # compute the difference in lesion count
+    df_concat['DeltaLesionsCount'] = abs(df_concat['PredLesionsCount'] - df_concat['RefLesionsCount'])
+
     # Loop across sites
     # for site in df_concat['site'].unique():
     # Loop across metrics
@@ -628,6 +633,8 @@ def main():
         metrics_to_plot = {
             'DiceSimilarityCoefficient': 'Dice Score',
             'LesionWiseF1Score': 'Lesion-wise F1 Score',
+            'NormalizedSurfaceDistance': 'NSD',
+            'DeltaLesionsCount': 'Delta Lesions Count',
         }
     elif args.pred_type == 'sc':
         metrics_to_plot = {
@@ -680,8 +687,8 @@ def main():
         # df_mega = df_mega[df_mega['dataset'] != 'DeepSegLesionInference_tumNeuropoly']
 
         if args.pred_type == 'lesion':
-            # generate raincloud plots
-            create_rainplot(args, df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
+            # # generate raincloud plots
+            # create_rainplot(args, df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
 
             # compute statistical tests
             # 1. Kruskal-Wallis H-test between deepseg_lesion, 2D Chunks single-site and two-sites models
