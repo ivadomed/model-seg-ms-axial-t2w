@@ -166,7 +166,7 @@ def main():
         if site == "TUM":
             # Print the min and max values of the MagneticFieldStrength, PixDim, and SliceThickness
             logger.info(df[['MagneticFieldStrength', 'PixDim', 'SliceThickness']].agg(['min', 'max']))
-            logger.info(df[['PixDim', 'SliceThickness']].agg(['median']))
+            # logger.info(df[['PixDim', 'SliceThickness']].agg(['median']))
 
             # # Print unique values of the Manufacturer and ManufacturerModelName
             # print(df[['Manufacturer', 'ManufacturerModelName']].drop_duplicates())
@@ -175,8 +175,11 @@ def main():
             # Print number of filenames for unique values of the MagneticFieldStrength
             logger.info(df.groupby('MagneticFieldStrength')['filename'].nunique())
             # print the EchoTime and RepetitionTime
-            logger.info(df[['EchoTime', 'RepetitionTime']].agg(['median']))
-            # # groupby echo time and repetition time
+            for manufac in df['Manufacturer'].unique():
+                logger.info(f"Manufacturer: {manufac}")
+                logger.info(df[df['Manufacturer'] == manufac][['EchoTime', 'RepetitionTime']].agg(['min', 'max', 'median']))
+            # logger.info(df[['EchoTime', 'RepetitionTime']].agg(['median']))
+            # groupby echo time and repetition time
             # logger.info(df.groupby(['EchoTime', 'RepetitionTime'])['filename'].nunique())
 
         else:
