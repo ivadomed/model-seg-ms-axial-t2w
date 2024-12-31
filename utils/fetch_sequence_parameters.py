@@ -23,6 +23,7 @@ import argparse
 import pandas as pd
 import nibabel as nib
 from loguru import logger
+from datetime import datetime
 
 LIST_OF_PARAMETERS = [
     'MagneticFieldStrength',
@@ -129,7 +130,8 @@ def main():
     path_out = "/home/GRAMES.POLYMTL.CA/u114716/tum-poly/sequence_parameters"
     if not os.path.exists(path_out):
         os.makedirs(path_out, exist_ok=True)
-    logger.add(os.path.join(path_out, f"sequence_params.log"), rotation="10 MB", level="INFO")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    logger.add(os.path.join(path_out, f"sequence_params_{timestamp}.log"), rotation="10 MB", level="INFO")
     
     path_json = args.i
 
@@ -158,6 +160,16 @@ def main():
 
         # Create a pandas DataFrame from the parsed data
         df = pd.DataFrame(parsed_data)
+
+        # convert all manufacturer names to lower case
+        df['Manufacturer'] = df['Manufacturer'].str.lower()
+        # if site is TUM merge all philips manufacturers
+        if site == "TUM":
+            df['Manufacturer'] = df['Manufacturer'].replace('philips healthcare', 'philips')
+            df['Manufacturer'] = df['Manufacturer'].replace('philips medical systems', 'philips')
+
+            # add the magnetic field strength to the manufacturer column
+            df['Manufacturer'] = df['Manufacturer'] + ' ' + df['MagneticFieldStrength'].astype(str) + 'T'
 
         # Save the DataFrame to a CSV file
         df.to_csv(os.path.join(path_out, f'{site}_parsed_data.csv'), index=False)
