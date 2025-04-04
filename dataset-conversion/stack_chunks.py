@@ -26,8 +26,10 @@ def find_subject_session_chunk_in_path(path):
     :param path: Input path containing subject and session identifiers.
     :return: Extracted subject and session identifiers or None if not found.
     """
+    # # used for nnunet-based outputs (note the '_')
     # pattern = r'.*_(sub-m\d{6})_(ses-\d{8}).*_(chunk-\d{1})_.*'
-    pattern = r'.*_(sub-m\d{6}_ses-\d{8}).*_(chunk-\d{1})_.*'
+    # used for sct_run_batch output (output name is starts with 'sub' directly)
+    pattern = r'.*(sub-m\d{6}_ses-\d{8}).*_(chunk-\d{1})_.*'
     match = re.search(pattern, path)
     if match:
         return match.group(1), match.group(2)
@@ -58,8 +60,9 @@ def get_images_in_folder(prediction, reference):
     :return: list of prediction files, list of reference/ground truth files
     """
     # Get all files in the directories
-    prediction_files = [os.path.join(prediction, f) for f in os.listdir(prediction) if f.endswith('.nii.gz')]
-    reference_files = [os.path.join(reference, f) for f in os.listdir(reference) if f.endswith('.nii.gz')]
+    # prediction_files = [os.path.join(prediction, f) for f in os.listdir(prediction) if f.endswith('lesion_seg_plb.nii.gz')]
+    prediction_files = [os.path.join(prediction, f) for f in os.listdir(prediction) if f.endswith('plb.nii.gz')]
+    reference_files = [os.path.join(reference, f) for f in os.listdir(reference) if f.endswith('lesion-manual.nii.gz')]
     # Check if the number of files in the directories is the same
     if len(prediction_files) != len(reference_files):
         raise ValueError(f'The number of files in the directories is different. '
@@ -86,12 +89,12 @@ def main():
         prediction_files = sorted(prediction_files)
         reference_files = sorted(reference_files)
 
-        path_out_pred = os.path.join(os.path.dirname(args.prediction), f'{os.path.basename(args.prediction)}_stacked')
-        if not os.path.exists(path_out_pred):
-            os.makedirs(path_out_pred, exist_ok=True)
-        path_out_ref = os.path.join(os.path.dirname(args.reference), f'{os.path.basename(args.reference)}_stacked')
-        if not os.path.exists(path_out_ref):
-            os.makedirs(path_out_ref, exist_ok=True)
+        # path_out_pred = os.path.join(os.path.dirname(args.prediction), f'{os.path.basename(args.prediction)}_stacked')
+        # if not os.path.exists(path_out_pred):
+        #     os.makedirs(path_out_pred, exist_ok=True)
+        # path_out_ref = os.path.join(os.path.dirname(args.reference), f'{os.path.basename(args.reference)}_stacked')
+        # if not os.path.exists(path_out_ref):
+        #     os.makedirs(path_out_ref, exist_ok=True)
 
         # get the subject, session, and chunk identifiers from the path
         subjects_sessions = [find_subject_session_chunk_in_path(f)[0] for f in prediction_files if find_subject_session_chunk_in_path(f)]
@@ -131,12 +134,12 @@ def main():
             refs_stack = [np.pad(ref, ((0, max_shape[0] - ref.shape[0]), (0, max_shape[1] - ref.shape[1]), (0, max_shape[2] - ref.shape[2]))) for ref in refs_stack]
 
             # stack the images
-            preds_stacked = np.stack(preds_stack, axis=-1).astype(np.uint8)
-            refs_stacked = np.stack(refs_stack, axis=-1).astype(np.uint8)
+            preds_stacked = np.concatenate([pred for pred in preds_stack], axis=2) #np.stack(preds_stack, axis=0).astype(np.uint8)
+            refs_stacked = np.concatenate([ref for ref in refs_stack], axis=2) #np.stack(refs_stack, axis=0).astype(np.uint8)
 
             # create a new file name for reference and prediction
-            pred_fname = os.path.join(path_out_pred, f'{dataset_name}_{sub_ses}_preds_stack.nii.gz')
-            ref_fname = os.path.join(path_out_ref, f'{dataset_name}_{sub_ses}_refs_stack.nii.gz')
+            pred_fname = os.path.join(os.path.dirname(preds_per_sub_ses[0]), f'{sub_ses}_preds_depthStack.nii.gz')
+            ref_fname = os.path.join(os.path.dirname(preds_per_sub_ses[0]), f'{sub_ses}_refs_depthStack.nii.gz')
 
             # save the stacked images as uint8
             nib.save(nib.Nifti1Image(preds_stacked, np.eye(4)), pred_fname)
