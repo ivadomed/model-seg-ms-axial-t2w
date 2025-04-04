@@ -83,7 +83,7 @@ def get_max_affine_and_shape(points: np.ndarray, affines, min_spacing=None, dtyp
 
     # print(points[hull.vertices])
     # Find best rotation
-    for id, affine in enumerate(affines, 1):
+    for id, affine in enumerate(affines, 1):    # starts from 1
         rotation, spacing = get_rotation_and_spacing_from_affine(affine)
         spacings.append(np.abs(spacing))
 
@@ -335,7 +335,7 @@ def main(
                 nii = set_array(nii, matched)
 
         niis.append(nii)
-        # Get affine and points for minimum enclosing Rectangle calculation
+        # Get affine and points for minimum enclosing Rectangle calculation for each image
         affine = nii.affine
         affines.append(affine)
 
