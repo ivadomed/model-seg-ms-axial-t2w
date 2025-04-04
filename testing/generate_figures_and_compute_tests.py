@@ -634,7 +634,7 @@ def main():
             'DiceSimilarityCoefficient': 'Dice Score',
             'LesionWiseF1Score': 'Lesion-wise F1 Score',
             'NormalizedSurfaceDistance': 'NSD',
-            'DeltaLesionsCount': 'Delta Lesions Count',
+            # 'DeltaLesionsCount': 'Delta Lesions Count',
         }
     elif args.pred_type == 'sc':
         metrics_to_plot = {
@@ -649,6 +649,21 @@ def main():
 
         # generate raincloud plots
         create_rainplot(args, df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
+        # compute mean and std of dice scores for each model and dataset
+        for dataset in df_mega['dataset'].unique():
+            for model in df_mega['model'].unique():
+                df_temp = df_mega[(df_mega['dataset'] == dataset) & (df_mega['model'] == model)]
+                logger.info(f"Dataset: {dataset}, Model: {model}")
+                metrics_temp = {
+                    'DiceSimilarityCoefficient': 'Dice Score',
+                    'LesionWiseF1Score': 'Lesion-wise F1 Score',
+                }
+                for metric in metrics_temp.keys():
+                    mean = df_temp[metric].mean()
+                    std = df_temp[metric].std()
+                    median = df_temp[metric].median()
+                    logger.info(f"\t{metrics_to_plot[metric]}: {mean:.3f} ± {std:.3f}, \tMedian: {median:.3f}")
+        exit()
 
         # TODO: figure out how to update this for SC segmentation as well
         if args.pred_type == 'lesion':
@@ -662,7 +677,9 @@ def main():
 
     elif args.compare_across == 'tum-poly':
 
+        # ---------------
         # Add the deepseg_lesion metrics csv manually
+        # ---------------
         deepseg_lesion_path = f"{os.path.dirname(args.i[0])}/DeepSegLesionInference_tumNeuropoly"
         if args.test_site == 'muc': 
             deepseg_lesion_path = os.path.join(deepseg_lesion_path, "test_tum_deepseg-lesion_stacked/metrics_final_lesion.csv")
@@ -677,6 +694,23 @@ def main():
 
         df_mega = pd.concat([df_mega, df_deepseg])
 
+        # ---------------
+        # Add the ms_lesion_agnostic metrics csv manually
+        # ---------------
+        ms_lesion_agnostic_path = f"{os.path.dirname(args.i[0])}/MSLesionAgnosticInference_tumNeuroPoly"
+        if args.test_site == 'muc': 
+            ms_lesion_agnostic_path = os.path.join(ms_lesion_agnostic_path, "test_tum_lesion-agnostic_stacked/metrics_final_lesion.csv")
+        else:
+            ms_lesion_agnostic_path = os.path.join(ms_lesion_agnostic_path, f"test_{args.test_site}_lesion-agnostic/metrics_final_lesion.csv")
+        logger.info(f"Processing: {ms_lesion_agnostic_path.replace(f'{os.path.dirname(args.i[0])}', '')}")
+        df_lesionAgnos = pd.read_csv(ms_lesion_agnostic_path)
+        df_lesionAgnos['dataset'] = 'MSLesionAgnosticInference_tumNeuroPoly'
+        df_lesionAgnos['model'] = '3D'
+        df_lesionAgnos['label'] = 1.0
+        df_lesionAgnos['fold'] = 'fold_0'
+
+        df_mega = pd.concat([df_mega, df_lesionAgnos])
+
         # keep only the rows with fold_0, or else, TUM models have 126*3=378 rows and DeepSegLesion has only 126 rows
         df_mega = df_mega[df_mega['fold'] == 'fold_0']
 
@@ -686,13 +720,13 @@ def main():
         # # remove deepseg_lesion from the dataframe
         # df_mega = df_mega[df_mega['dataset'] != 'DeepSegLesionInference_tumNeuropoly']
 
-        if args.pred_type == 'lesion':
-            # # generate raincloud plots
-            # create_rainplot(args, df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
+        # if args.pred_type == 'lesion':
+        #     # # generate raincloud plots
+        #     # create_rainplot(args, df_mega, metrics_to_plot, path_out, pred_type=args.pred_type)
 
-            # compute statistical tests
-            # 1. Kruskal-Wallis H-test between deepseg_lesion, 2D Chunks single-site and two-sites models
-            compute_kruskal_wallis_test_across_tum_poly(df_mega, metrics_to_plot.keys(), test_site=args.test_site)
+        #     # compute statistical tests
+        #     # 1. Kruskal-Wallis H-test between deepseg_lesion, 2D Chunks single-site and two-sites models
+        #     compute_kruskal_wallis_test_across_tum_poly(df_mega, metrics_to_plot.keys(), test_site=args.test_site)
 
 
     # save the mega dataframe
