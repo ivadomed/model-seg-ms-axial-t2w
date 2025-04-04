@@ -244,6 +244,8 @@ def main():
         logger.info(f"Number of excluded subjects: {len(excluded_subs)}")
 
     # get all the lesion files from the json file that PL created and shared
+    # NOTE: the file that PL created were only used for the sct-testing-large datasets (nyu, bwh, ucsf)
+    # for TUM MS dataset, the original split from nnunet was kept
     path_json = args.path_json
     all_lesion_files_testing_large = []
     if path_json is not None:
