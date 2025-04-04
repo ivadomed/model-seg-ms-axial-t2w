@@ -4,6 +4,7 @@ The input to the script is a CSV file containing the metrics across all the site
 output by the 'plot_metrics_per_site.py' script in the 'model_seg_sci/testing' directory.
 The table is printed to the terminal, which can be copied to the .tex file.
 
+The table is formatted with models as columns and test sites as rows.
 """
 
 import pandas as pd
@@ -13,16 +14,18 @@ import argparse
 metrics_to_rename = {
     'DiceSimilarityCoefficient_mean': 'Dice',
     'LesionWiseF1Score_mean': 'F1ScoreL',
+    'LesionWisePositivePredictiveValue_mean': 'PPVL',
     'NormalizedSurfaceDistance_mean': 'NSD',
     'DeltaLesionsCount_mean': 'DeltaLesions'
 }
 
 models_to_rename = {
-    'DeepSegLesionInference_tumNeuropoly_3D': 'DeepSeg\nLesion',
-    'Dataset901_tumMSChunksRegion_2D': 'ChunksNative\nSingleSite\n2D',
-    'Dataset901_tumMSChunksRegion_3D': 'ChunksNative\nSingleSite\n3D',
-    'Dataset910_tumMSChunksPolyNYUAxialRegion_2D': 'ChunksNative\nTwoSites\n2D',
-    'Dataset910_tumMSChunksPolyNYUAxialRegion_3D': 'ChunksNative\nTwoSites\n3D',
+    'DeepSegLesionInference_tumNeuropoly_3D': 'DeepSegLesion',
+    'MSLesionAgnosticInference_tumNeuroPoly_3D': 'MSLesionSeg(SCTv6.5)',
+    'Dataset901_tumMSChunksRegion_2D': 'ChunksNativeSingleSite',
+    # 'Dataset901_tumMSChunksRegion_3D': 'ChunksNative\nSingleSite\n3D',
+    'Dataset910_tumMSChunksPolyNYUAxialRegion_2D': 'ChunksNativeTwoSites',
+    # 'Dataset910_tumMSChunksPolyNYUAxialRegion_3D': 'ChunksNative\nTwoSites\n3D',
 }
 
 def get_parser():
@@ -32,21 +35,24 @@ def get_parser():
     return parser
 
 
-# Helper function to create rows for each model
-def create_rows(model, df, metrics_mean_list, metrics_std_list):
+# Helper function to create rows for each test site and metric
+def create_rows(site, df, metrics_mean_list, metrics_std_list, models):
     rows = ""
     len_metrics = len(metrics_mean_list)
-    wrapped_model = r"\makecell[l]{" + model.replace('\n', r' \\ ') + r"}"
+    
     for i in range(len_metrics):
         if i == 0:
-            rows += f"\\multirow{{{len_metrics}}}{{*}}{{{wrapped_model}}} & {metrics_to_rename[metrics_mean_list[i]]} "
+            rows += f"\\multirow{{{len_metrics}}}{{*}}{{{site}}} & {metrics_to_rename[metrics_mean_list[i]]} "
         else:
             rows += f" & {metrics_to_rename[metrics_mean_list[i]]} "
         
-        for site in df['site'].unique():
-            mean = df.loc[(df['model'] == model) & (df['site'] == site), metrics_mean_list[i]].values[0]
-            std = df.loc[(df['model'] == model) & (df['site'] == site), metrics_std_list[i]].values[0]
-            rows += f"& {mean:.2f} $\pm$ {std:.2f} "
+        for model in models:
+            if df[(df['model'] == model) & (df['site'] == site)].empty:
+                rows += f"& - "
+            else:
+                mean = df.loc[(df['model'] == model) & (df['site'] == site), metrics_mean_list[i]].values[0]
+                std = df.loc[(df['model'] == model) & (df['site'] == site), metrics_std_list[i]].values[0]
+                rows += f"& {mean:.2f} $\pm$ {std:.2f} "
         rows += "\\\\\n"
     return rows
 
@@ -54,40 +60,11 @@ def create_rows(model, df, metrics_mean_list, metrics_std_list):
 def main():
     args = get_parser().parse_args()
 
-    # Create LaTeX table
-    latex_table = r"""
-    \begin{table}[htbp]
-        \centering
-        \setlength{\tabcolsep}{4pt} % Adjust the length as needed
-        \caption{Quantitative comparison of segmentation models on in- and out-of-distribution test sites}
-        \resizebox{0.8\textwidth}{!}{%
-        \begin{tabular}{llccc}
-        \toprule
-            \multirow{3}{*}{\textbf{Model}} & \multirow{3}{*}{\textbf{Metric}} & \multicolumn{1}{c}{\multirow{2}{*}{\textbf{\makecell{Test Site \\ (in-distribution)}}}} & \multicolumn{2}{c}{\multirow{2}{*}{\textbf{\makecell{Test Sites \\ (out-of-distribution)}}}} \\
-            \\
-            \cline{3-5} & &
-            \multirow{1}{*}{\textbf{TUM}$_{(n=126)}$} & \multirow{1}{*}{\textbf{BWH}$_{(n=80)}$} & \multirow{1}{*}{\textbf{UCSF}$_{(n=32)}$} \\
-            \hline
-    """
-
-    metrics_to_include = ['DiceSimilarityCoefficient', 'LesionWiseF1Score', 'NormalizedSurfaceDistance', 'DeltaLesionsCount']
-
     df_mega = pd.DataFrame()
     # read the csv files
     for i, csv in enumerate(args.i): 
-        
         print(f"Reading {csv}")
         df = pd.read_csv(csv)
-
-        # # hacky fix -- set the model to 2D where dataset is 'DeepSegLesionInference_tumNeuropoly'
-        # for dataset in df['dataset'].unique():
-        #     if 'DeepSegLesionInference_tumNeuropoly' in dataset:
-        #         df.loc[df['dataset'] == dataset, 'model'] = '2D'
-        #     else:
-        #         pass
-
-        # # remove the rows where models is '3D'
-        # df = df[df['model'] != '3D']
             
         if df['prediction'].str.contains('sub-m').any():
             df['site'] = 'TUM'
@@ -95,12 +72,6 @@ def main():
             df['site'] = 'BWH'
         elif df['prediction'].str.contains('sub-ucsf').any():
             df['site'] = 'UCSF'
-
-        # # remove the model column
-        # df = df.drop(columns=['model', 'reference', 'prediction', 'fold'])
-
-        # # rename the dataset column to 'model'
-        # df = df.rename(columns={'dataset': 'model'})
 
         # compute the difference in lesion count
         df['DeltaLesionsCount'] = abs(df['PredLesionsCount'] - df['RefLesionsCount'])
@@ -112,10 +83,11 @@ def main():
         # rename the dataset column to 'model'
         df = df.rename(columns={'dataset_new': 'model'})
 
-        # keep only the metrics in metrics_to_include
+        # keep only the metrics we need
+        metrics_to_include = ['DiceSimilarityCoefficient', 'LesionWiseF1Score', 'NormalizedSurfaceDistance', 'DeltaLesionsCount', 'LesionWisePositivePredictiveValue']
         df = df[['site', 'model'] + metrics_to_include]
 
-        # in a new dataframe, compute the mean and std of the metrics for each model and add a suffix _mean and _std
+        # compute mean and std for each metric
         df_mean = df.groupby(['site', 'model']).mean().add_suffix('_mean').reset_index()
         df_std = df.groupby(['site', 'model']).std().add_suffix('_std').reset_index()
 
@@ -125,19 +97,13 @@ def main():
         # remove the duplicate columns
         df_concat = df_concat.loc[:, ~df_concat.columns.duplicated()]
 
-        # reorder the columns with mean adn std next to each other
-        df_concat = df_concat[['model', 'site', \
-                               'DiceSimilarityCoefficient_mean', 'DiceSimilarityCoefficient_std', \
-                               'NormalizedSurfaceDistance_mean', 'NormalizedSurfaceDistance_std', \
-                               'LesionWiseF1Score_mean', 'LesionWiseF1Score_std', \
-                                'DeltaLesionsCount_mean', 'DeltaLesionsCount_std']]
-        # # move model, site to the front
-        # cols = df_concat.columns.tolist()
-        # cols = cols[-2:] + cols[:-2]
-        # df_concat = df_concat[cols]
-
-        metrics_mean_list = df_concat.columns[df_concat.columns.str.contains('mean')].tolist()
-        metrics_std_list = df_concat.columns[df_concat.columns.str.contains('std')].tolist()
+        # reorder the columns with mean and std next to each other
+        df_concat = df_concat[['model', 'site', 
+                               'DiceSimilarityCoefficient_mean', 'DiceSimilarityCoefficient_std',
+                               'NormalizedSurfaceDistance_mean', 'NormalizedSurfaceDistance_std',
+                               'LesionWisePositivePredictiveValue_mean', 'LesionWisePositivePredictiveValue_std',
+                               'LesionWiseF1Score_mean', 'LesionWiseF1Score_std',
+                               'DeltaLesionsCount_mean', 'DeltaLesionsCount_std']]
 
         # Concatenate the dataframes
         df_mega = pd.concat([df_mega, df_concat])
@@ -145,17 +111,47 @@ def main():
     # Rename models
     df_mega['model'] = df_mega['model'].map(models_to_rename)
 
-    # Generate rows for each model 
-    for model in df_mega['model'].unique():
-        latex_table += create_rows(model, df_mega, metrics_mean_list, metrics_std_list)
+    # Get the list of metrics and models
+    metrics_mean_list = df_mega.columns[df_mega.columns.str.contains('mean')].tolist()
+    metrics_std_list = df_mega.columns[df_mega.columns.str.contains('std')].tolist()
+    models = df_mega['model'].unique().tolist()
+    sites = ['TUM', 'BWH', 'UCSF']
+
+    # Generate LaTeX table
+    model_columns = " & ".join([f"\\multicolumn{{1}}{{c}}{{\\textbf{{{model}}}}} " for model in models])
+    # model_columns = " & ".join([f"\\multicolumn{{1}}{{c}}{{\\textbf{{{model.replace(chr(10), ' ')}}}}} " for model in models])
+    # print(model_columns)
+    # exit()
+    
+    latex_table = f"""
+    \\begin{{table}}[htbp]
+        \\centering
+        \\setlength{{\\tabcolsep}}{{4pt}} % Adjust the length as needed
+        \\caption{{Quantitative comparison of segmentation models on in- and out-of-distribution test sites}}
+        \\resizebox{{\\textwidth}}{{!}}{{%
+        \\begin{{tabular}}{{ll{"|c" * len(models)}}}
+        \\toprule
+            \\multirow{{2}}{{*}}{{\\textbf{{Test Site}}}} & \\multirow{{2}}{{*}}{{\\textbf{{Metric}}}} & \\multicolumn{{{len(models)}}}{{c}}{{\\textbf{{Models}}}} \\\\
+            \\cline{{3-{2 + len(models)}}}
+            & & {model_columns} \\\\
+            \\hline
+    """
+
+    # Generate rows for each test site
+    for site in sites:
+        # distribution_type = "(in-distribution)" if site == "TUM" else "(out-of-distribution)"
+        sample_size = "{(n=126)}" if site == "TUM" else "{(n=80)}" if site == "BWH" else "{(n=32)}"
+        site_label = f"\\textbf{{{site}\n{sample_size}}}" # {distribution_type}"
+        
+        latex_table += create_rows(site, df_mega, metrics_mean_list, metrics_std_list, models)
         latex_table += "\\hline\n"
 
-    latex_table += r"""
-        \bottomrule
-        \end{tabular}%
+    latex_table += """
+        \\bottomrule
+        \\end{tabular}%
         }
-        \label{tab:metrics}
-    \end{table}
+        \\label{tab:metrics}
+    \\end{table}
     """
 
     print(latex_table)
